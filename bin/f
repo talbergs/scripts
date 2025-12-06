@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+shellenv=/tmp/shellenv.fish
+bindir=$(dirname $0)
+export SCRIPTS_DIR="$(cd "$bindir";cd ..;pwd)"
+
+tee "$shellenv" <<EOF
+export PATH="$PATH:/nix/var/nix/profiles/default/bin"
+
+# [n]eovim
+function n
+  $bindir/n \$argv
+end
+
+# [v]vim
+function v
+  n \$argv
+end
+EOF
+
+fish -C "source $bindir/../fish/config.fish && source '$shellenv'" $@
