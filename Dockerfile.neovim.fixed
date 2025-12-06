@@ -1,0 +1,49 @@
+# Multi-stage build for Neovim with Nix on ARM64
+# Properly handles Nix symlinks by copying the actual store paths
+FROM nixos/nix:latest AS builder
+
+# Enable experimental features for flakes support
+RUN echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+
+# Copy the Nix expression
+COPY neovim.nix /build/neovim.nix
+
+WORKDIR /build
+
+# Build the derivation
+RUN nix-build neovim.nix
+
+# Get all runtime dependencies and copy them
+# This ensures we have the full closure (all dependencies)
+RUN nix-store --query --requisites $(readlink -f /build/result) > /build/store-paths.txt
+
+# Final stage
+FROM nixos/nix:latest
+
+# Copy the entire Nix store closure
+COPY --from=builder /build/store-paths.txt /tmp/store-paths.txt
+
+# Copy all dependencies from the Nix store
+COPY --from=builder /nix/store /nix/store
+
+# Copy the result symlink (now it has something to point to)
+COPY --from=builder /build/result /usr/local/neovim
+
+# Add to PATH
+ENV PATH="/usr/local/neovim/bin:${PATH}"
+ENV XDG_CONFIG_HOME=/config
+
+# Create config directory
+RUN mkdir -p /config/nvim
+
+# Copy init.lua
+COPY init.lua /config/nvim/init.lua
+
+# Set working directory
+WORKDIR /workspace
+
+# Set neovim as entrypoint
+ENTRYPOINT ["/usr/local/neovim/bin/nvim"]
+
+# Default command
+CMD ["."]

@@ -1,0 +1,34 @@
+# Single-stage build for Neovim with Nix on ARM64
+# Simpler than multi-stage since we need Nix in the final image anyway
+FROM nixos/nix:latest
+
+# Enable experimental features for flakes support
+RUN echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+
+# Copy the Nix expression
+COPY neovim.nix /build/neovim.nix
+
+WORKDIR /build
+
+# Build the derivation
+RUN nix-build neovim.nix
+
+# Add the result to PATH (result is a symlink to /nix/store/...)
+# This works because the Nix store is in the same image
+ENV PATH="/build/result/bin:${PATH}"
+ENV XDG_CONFIG_HOME=/config
+
+# Create config directory
+RUN mkdir -p /config/nvim
+
+# Copy init.lua
+COPY init.lua /config/nvim/init.lua
+
+# Set working directory
+WORKDIR /workspace
+
+# Set neovim as entrypoint
+ENTRYPOINT ["/build/result/bin/nvim"]
+
+# Default command
+CMD ["."]
