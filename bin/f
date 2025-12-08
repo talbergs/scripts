@@ -16,6 +16,10 @@ end
 function v
   n \$argv
 end
+
+function scripts:brew
+  $bindir/scripts:brew \$argv
+end
 EOF
 
 fish -C "source $bindir/../fish/config.fish && source '$shellenv'" $@
