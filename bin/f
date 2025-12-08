@@ -20,6 +20,10 @@ end
 function scripts:brew
   $bindir/scripts:brew \$argv
 end
+
+function scripts:conf
+    cp $SCRIPTS_DIR/aerospace/.aerospace.toml $HOME
+end
 EOF
 
 fish -C "source $bindir/../fish/config.fish && source '$shellenv'" $@
