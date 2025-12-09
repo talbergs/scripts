@@ -71,7 +71,7 @@ on-mode-changed = []
     outer.left =       4
     outer.bottom =     4
     outer.top =        4
-    outer.right =      4
+    outer.right =      70
 
 # 'main' binding mode declaration
 # See: https://nikitabobko.github.io/AeroSpace/guide#binding-modes
@@ -79,7 +79,6 @@ on-mode-changed = []
 # Fallback value (if you omit the key): mode.main.binding = {}
 [mode.main.binding]
     alt-f = 'fullscreen'
-
 
     # All possible keys:
     # - Letters.        a, b, c, ..., z
