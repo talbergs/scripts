@@ -24,6 +24,12 @@ end
 function scripts:conf
     cp $SCRIPTS_DIR/rice/aerospace/.aerospace.toml $HOME
     cp -R $SCRIPTS_DIR/rice/sketchybar $HOME/.config/sketchybar
+
+    aerospace reload-config
+end
+
+function scripts:init
+    # aerospace &
 end
 EOF
 

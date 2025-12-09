@@ -40,7 +40,7 @@ function fish_prompt
   tput setaf 1
   fish_prompt:jobs
   tput setaf 3
-  echo \(shell depth: $SHLVL\)\(MOPIDY-DAYZ\)
+  echo \(shell depth: $SHLVL\)\
   tput sgr0
   tput setaf 6
   echo $PWD

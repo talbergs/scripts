@@ -18,3 +18,4 @@ brew install --cask ungoogled-chromium
 
 # pt2
 brew services start postgresql
+# System Settings -> Desktop & Dock -> Automatically hide and show the menu bar -> Always:
