@@ -4,7 +4,7 @@ shellenv=/tmp/shellenv.fish
 bindir=$(dirname $0)
 export SCRIPTS_DIR="$(cd "$bindir";cd ..;pwd)"
 
-tee "$shellenv" <<EOF
+cat > "$shellenv" <<EOF
 export PATH="$PATH:/nix/var/nix/profiles/default/bin"
 
 # [n]eovim
