@@ -1,4 +1,4 @@
--- vim: foldmethod=marker
+-- vim: foldmethod=marker ts=2 sw=2
 --
 -- TODO: mcp chromium-web-devtools integration 
 -- workflow: on Jira task press record, reproduce bug, stop recording, upload to Jira ticket
@@ -67,6 +67,9 @@ vim.lsp.config('lua_ls', {
 vim.cmd.colorscheme("habamax")
 
 vim.pack.add({
+  "https://github.com/folke/snacks.nvim",
+  "https://github.com/coder/claudecode.nvim",
+
   -- LLM/AI Plugins
   "https://github.com/David-Kunz/gen.nvim",
   "https://github.com/Kurama622/llm.nvim",
