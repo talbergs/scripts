@@ -1,3 +1,8 @@
 #!/usr/bin/env bash
 
-# aerospace &
+# which fisher && fisher install jethrokuan/z
+# which aerospace && aerospace&
+#
+# brew install lua
+# cd /tmp && git clone https://github.com/FelixKratz/SbarLua.git /tmp/SbarLua && cd /tmp/SbarLua/ && make install && rm -rf /tmp/SbarLua/
+# which sketchybar && sketchybar &

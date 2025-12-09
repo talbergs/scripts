@@ -12,6 +12,7 @@ brew install --cask sequel-ace
 brew install ripgrep
 brew install neovim
 brew install rust
+brew install fisher
 brew install --cask iterm2
 brew install --cask brave-browser
 brew install --cask ungoogled-chromium

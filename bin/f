@@ -17,6 +17,15 @@ function v
   n \$argv
 end
 
+# TODO: generate bindings to bin
+function php-serve
+  $bindir/php-serve \$argv
+end
+
+function create-database
+  $bindir/create-database \$argv
+end
+
 function scripts:brew
   $bindir/scripts:brew \$argv
 end
