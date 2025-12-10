@@ -34,6 +34,10 @@ function scripts:brew
   $bindir/scripts:brew \$argv
 end
 
+function :comment
+  $bindir/:comment \$argv
+end
+
 function scripts:conf
     cp $SCRIPTS_DIR/rice/aerospace/.aerospace.toml $HOME
     cp -R $SCRIPTS_DIR/rice/sketchybar $HOME/.config/sketchybar

@@ -2,10 +2,11 @@
 # brew link --overwrite php@8.4
 # brew link --overwrite php@8.5
 
-php -S 0.0.0.0:8888 \
+php -S 0.0.0.0:${1:-8888} \
     -d post_max_size=16M \
     -d max_execution_time=300 \
     \
+    -d error_log=/tmp/php.error.log \
     -d date.timezone=Europe/Riga \
     -d error_reporting=E_ALL \
     -d log_errors=On \
