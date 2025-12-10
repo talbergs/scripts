@@ -22,6 +22,10 @@ function php-serve
   $bindir/php-serve \$argv
 end
 
+function apply-database
+  $bindir/apply-database \$argv
+end
+
 function create-database
   $bindir/create-database \$argv
 end

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+if [ -z "$1" ]
+then
+    echo Usage: $(basename $0) DBNAME
+    exit 1
+fi
+
+if [ ! -f $PWD/database/postgresql/data.sql ]
+then
+    if [ -f $PWD/database/postgresql/images.sql ]
+    then
+        ./bootstrap.sh
+        ./configure --prefix $PWD/result --with-postgresql --enable-agent2 --enable-server
+        make dbschema
+    fi
+
+    if [ ! -f $PWD/database/postgresql/data.sql ]
+    then
+        echo [error] running in $PWD
+        echo [error] missing database/postgresql/data.sql file.
+        exit 1
+    fi
+fi
+
+dbname="$1"
+set dbname test4
+
+# brew link --overwrite postgresql@18
+psql -h 0.0.0.0 postgres -c "DROP DATABASE $dbname"
+psql -h 0.0.0.0 postgres -c "CREATE DATABASE $dbname WITH ENCODING 'Unicode' TEMPLATE template0;"
+psql -h 0.0.0.0 "$dbname" -c "\i $PWD/database/postgresql/schema.sql"
+psql -h 0.0.0.0 "$dbname" -c "\i $PWD/database/postgresql/images.sql"
+psql -h 0.0.0.0 "$dbname" -c "\i $PWD/database/postgresql/data.sql"
+psql -h 0.0.0.0 postgres -c "CREATE USER $dbname WITH SUPERUSER PASSWORD '$dbname';"
+psql -h 0.0.0.0 postgres -c "GRANT ALL PRIVILEGES ON DATABASE \"$dbname\" TO $dbname;"

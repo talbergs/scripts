@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-# brew link --overwrite postgresql@18
-
-user=zabbix
-psql -h 0.0.0.0 postgres -c "CREATE USER $user WITH PASSWORD '$user';"
-psql -h 0.0.0.0 postgres -c "CREATE DATABASE $user WITH ENCODING 'Unicode' WITH TEMPLATE template0;"
