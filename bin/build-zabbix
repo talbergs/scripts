@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# brew install unixodbc c-ares libevent zlib postgresql@17 pcre2 autoconf automake net-snmp mysql
+# sudo sysctl -w kern.sysv.shmmax=268435456
+# sudo sysctl -w kern.sysv.shmall=65536
+# sudo sysctl -w kern.sysv.shmseg=32
+
+if [ ! -f ./bootstrap.sh ]
+then
+    echo No bootstrap.sh file in $PWD
+    exit 1
+fi
+
+dbname=$(basename $PWD | sed 's/[^[:alnum:]]//g')
+
+if [ -d $PWD/result/etc ]
+then
+    make clean
+    rm -rf $PWD/result
+fi
+
+if [ "$(sed -e 1q ./result/etc/zabbix_server.conf)" != "#(updated)" ];
+then
+    $SCRIPTS_DIR/bin/configure-zabbix "$dbname"
+fi
+
+./bootstrap.sh
+if [ "$1" == "full" ]
+then
+    ./configure --prefix $PWD/result --with-postgresql --enable-agent --enable-agent2 --enable-server \
+        --enable-proxy --with-ares --enable-ipv6 --with-libcurl --with-unixodbc --with-libxml2 --with-openssl --with-libpcre2 --with-ssh --with-ldap --with-net-snmp=/opt/homebrew/opt/net-snmp/bin/net-snmp-config
+    make -j12 -s install
+else
+    ./configure --prefix $PWD/result --with-postgresql --enable-agent --enable-agent2 --enable-server
+    make install
+fi

@@ -26,6 +26,14 @@ function apply-database
   $bindir/apply-database \$argv
 end
 
+function build-zabbix
+  $bindir/build-zabbix \$argv
+end
+
+function configure-zabbix
+  $bindir/configure-zabbix \$argv
+end
+
 function create-database
   $bindir/create-database \$argv
 end

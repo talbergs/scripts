@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+if [ -z "$1" ]
+then
+    echo Usage: $(basename $0) DBNAME
+    exit 1
+fi
+
+if [ ! -d $PWD/result/etc ]
+then
+    echo Not a directory: $PWD/result/etc
+    exit 1
+fi
+
+dbname=$1
+
+echo "
+    #(updated)
+    DBHost=0.0.0.0
+    DBUser=$dbname
+    DBPassword=$dbname
+    DBName=$dbname
+    LogType=console
+    EnableGlobalScripts=0
+    StatsAllowedIP=127.0.0.1
+    Timeout=4
+    LogSlowQueries=3000
+" \
+| sed -e 's/^[[:space:]]*//g' -e '/^$/d' \
+> ./result/etc/zabbix_server.conf
+
+echo "
+    #(updated)
+    Hostname=Zabbix server
+    Server=127.0.0.1,0.0.0.0
+    LogType=console
+" \
+| sed -e 's/^[[:space:]]*//g' -e '/^$/d' \
+> ./result/etc/zabbix_agent2.conf

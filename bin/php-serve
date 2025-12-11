@@ -25,7 +25,28 @@ then
     " > ./conf/zabbix.conf.php
 fi
 
-php -S 0.0.0.0:${1:-8888} \
+# PID file management
+PORT=${1:-8888}
+PIDFILE="/tmp/php-serve-${PORT}.pid"
+
+# Check if PID file exists for this PORT
+if [ -f "$PIDFILE" ]; then
+    OLD_PID=$(cat "$PIDFILE")
+    
+    # Check if process is still running
+    if ps -p "$OLD_PID" > /dev/null 2>&1; then
+        echo "PHP server is already running on port $PORT (PID: $OLD_PID)"
+        echo "To kill the process, run: kill $OLD_PID"
+        echo "Or to force kill: kill -9 $OLD_PID"
+        exit 1
+    else
+        echo "Stale PID file found (process $OLD_PID no longer exists), removing..."
+        rm -f "$PIDFILE"
+    fi
+fi
+
+# Start PHP server in background momentarily to capture PID
+php -S 0.0.0.0:${PORT} \
     -d post_max_size=16M \
     -d max_execution_time=300 \
     \
@@ -33,4 +54,17 @@ php -S 0.0.0.0:${1:-8888} \
     -d date.timezone=Europe/Riga \
     -d error_reporting=E_ALL \
     -d log_errors=On \
-    -d memory_limit=4G
+    -d memory_limit=4G &
+
+# Save the PID
+PHP_PID=$!
+echo $PHP_PID > "$PIDFILE"
+
+echo "PHP server started on port $PORT (PID: $PHP_PID)"
+echo "PID file: $PIDFILE"
+
+# Wait in foreground
+wait $PHP_PID
+
+# Clean up PID file when server stops
+rm -f "$PIDFILE"
