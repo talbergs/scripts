@@ -2,6 +2,29 @@
 # brew link --overwrite php@8.4
 # brew link --overwrite php@8.5
 
+if [ ! -f ./index.php ]
+then
+    echo No index.php file in $PWD
+    exit 1
+fi
+
+dbname=$(cd ..;basename $PWD | sed 's/[^[:alnum:]]//g')
+read -p "DEV_DBNAME = $dbname, ok?"
+
+if [ ! -f ./conf/zabbix.conf.php ]
+then
+    (
+        cd ..
+        $SCRIPTS_DIR/bin/apply-database "$dbname"
+    )
+    echo "<?php define('DEV_DBNAME', '$dbname');
+        \$DB['TYPE'] = ZBX_DB_POSTGRESQL;
+        \$DB['DATABASE'] = DEV_DBNAME;
+        \$DB['USER'] = DEV_DBNAME;
+        \$DB['PASSWORD'] = DEV_DBNAME;
+    " > ./conf/zabbix.conf.php
+fi
+
 php -S 0.0.0.0:${1:-8888} \
     -d post_max_size=16M \
     -d max_execution_time=300 \
