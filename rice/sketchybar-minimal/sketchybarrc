@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+
+# Minimal SketchyBar Configuration
+# Features: Aerospace workspace, Clock, Battery
+
+# Colors
+BAR_COLOR=0xcc24273a
+WHITE=0xffcad3f5
+BLACK=0xff181926
+BLUE=0xff8aadf4
+GREEN=0xffa6da95
+YELLOW=0xffeed49f
+RED=0xffed8796
+TRANSPARENT=0x00000000
+
+PLUGIN_DIR="$SCRIPTS_DIR/rice/sketchybar-minimal/plugins"
+
+# Bar setup
+sketchybar --bar \
+    height=32 \
+    color=$BAR_COLOR \
+    position=top \
+    sticky=on \
+    padding_left=10 \
+    padding_right=10 \
+    corner_radius=9 \
+    y_offset=5 \
+    margin=10 \
+    blur_radius=20
+
+# Default item settings
+sketchybar --default \
+    updates=when_shown \
+    icon.font="SF Pro:Bold:14.0" \
+    icon.color=$WHITE \
+    icon.padding_left=8 \
+    icon.padding_right=8 \
+    label.font="SF Pro:Semibold:13.0" \
+    label.color=$WHITE \
+    label.padding_left=8 \
+    label.padding_right=8 \
+    background.height=26 \
+    background.corner_radius=9 \
+    background.padding_left=4 \
+    background.padding_right=4
+
+# Aerospace Workspaces
+sketchybar --add event aerospace_workspace_change
+
+for sid in $(aerospace list-workspaces --all 2>/dev/null || echo "1 2 3 4 5"); do
+    sketchybar --add item space.$sid left \
+        --subscribe space.$sid aerospace_workspace_change \
+        --set space.$sid \
+            icon="$sid" \
+            icon.font="SF Pro:Bold:14.0" \
+            label.drawing=off \
+            background.color=$TRANSPARENT \
+            background.border_color=$BLUE \
+            background.border_width=2 \
+            click_script="aerospace workspace $sid" \
+            script="$PLUGIN_DIR/aerospace.sh $sid"
+done
+
+# Clock
+sketchybar --add item clock right \
+    --set clock \
+        update_freq=1 \
+        icon.drawing=off \
+        background.color=$BLUE \
+        script="$PLUGIN_DIR/clock.sh"
+
+# Battery
+sketchybar --add item battery right \
+    --set battery \
+        update_freq=30 \
+        icon.font="SF Pro:Bold:16.0" \
+        background.color=$GREEN \
+        script="$PLUGIN_DIR/battery.sh"
+
+# Update
+sketchybar --update
+
+echo "Minimal SketchyBar configuration loaded"
