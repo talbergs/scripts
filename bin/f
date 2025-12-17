@@ -5,6 +5,7 @@ bindir=$(dirname $0)
 export SCRIPTS_DIR="$(cd "$bindir";cd ..;pwd)"
 
 cat > "$shellenv" <<EOF
+# fish_add_path --path /Applications/Docker.app/Contents/Resources/bin/ > /dev/null
 export PATH="$PATH:/nix/var/nix/profiles/default/bin"
 
 # [n]eovim
@@ -47,9 +48,11 @@ function :comment
 end
 
 function scripts:conf
-    cp $SCRIPTS_DIR/rice/aerospace/.aerospace.toml $HOME
-    cp -R $SCRIPTS_DIR/rice/sketchybar $HOME/.config/sketchybar
+    [ -d $HOME/.config/sketchybar ] && rm -rf $HOME/.config/sketchybar
+    # cp -R $SCRIPTS_DIR/rice/sketchybar-minimal $HOME/.config/sketchybar
+    # brew services restart sketchybar
 
+    cp $SCRIPTS_DIR/rice/aerospace/.aerospace.toml $HOME
     aerospace reload-config
 end
 

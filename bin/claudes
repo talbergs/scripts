@@ -1,0 +1,744 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Configuration
+SESSIONS_DIR="${HOME}/.config/claude/sessions"
+SESSIONS_DB="${SESSIONS_DIR}/sessions.db"
+CHAINS_DB="${SESSIONS_DIR}/chains.db"
+CONTEXT_DIR="${SESSIONS_DIR}/context"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+CHAIN_CHAR_LIMIT=2000
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+NC='\033[0m' # No Color
+
+# Ensure sessions directory exists
+mkdir -p "${SESSIONS_DIR}"
+mkdir -p "${CONTEXT_DIR}"
+touch "${SESSIONS_DB}"
+touch "${CHAINS_DB}"
+
+# Generate a 2-character code from session name (a-z only)
+generate_code_from_name() {
+    local name="$1"
+    local existing_codes=$(awk -F'|' '{print $1}' "${SESSIONS_DB}" 2>/dev/null || true)
+
+    # Convert to lowercase and extract letters only
+    local clean_name=$(echo "${name}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z')
+
+    if [[ -z "${clean_name}" ]]; then
+        clean_name="session"
+    fi
+
+    # Try to generate code from first letters of words
+    local words=($(echo "${name}" | tr '[:upper:]' '[:lower:]' | grep -o '\b[a-z]' | head -5))
+
+    # Strategy 1: First letters of first two words
+    if [[ ${#words[@]} -ge 2 ]]; then
+        local code="${words[0]}${words[1]}"
+        if ! echo "${existing_codes}" | grep -q "^${code}$"; then
+            echo "${code}"
+            return
+        fi
+    fi
+
+    # Strategy 2: First two letters
+    if [[ ${#clean_name} -ge 2 ]]; then
+        local code="${clean_name:0:2}"
+        if ! echo "${existing_codes}" | grep -q "^${code}$"; then
+            echo "${code}"
+            return
+        fi
+    fi
+
+    # Strategy 3: First and last letter
+    if [[ ${#clean_name} -ge 2 ]]; then
+        local code="${clean_name:0:1}${clean_name: -1}"
+        if ! echo "${existing_codes}" | grep -q "^${code}$"; then
+            echo "${code}"
+            return
+        fi
+    fi
+
+    # Strategy 4: Try all two-letter combinations from name
+    for ((i=0; i<${#clean_name}-1; i++)); do
+        for ((j=i+1; j<${#clean_name}; j++)); do
+            local code="${clean_name:$i:1}${clean_name:$j:1}"
+            if ! echo "${existing_codes}" | grep -q "^${code}$"; then
+                echo "${code}"
+                return
+            fi
+        done
+    done
+
+    # Strategy 5: Fallback to any available code
+    generate_any_code
+}
+
+# Generate any available 2-character code (a-z only)
+generate_any_code() {
+    local existing_codes=$(awk -F'|' '{print $1}' "${SESSIONS_DB}" 2>/dev/null || true)
+
+    for i in {a..z}; do
+        for j in {a..z}; do
+            local code="${i}${j}"
+            if ! echo "${existing_codes}" | grep -q "^${code}$"; then
+                echo "${code}"
+                return
+            fi
+        done
+    done
+
+    echo "ERROR: No available session codes (676 limit reached)" >&2
+    exit 1
+}
+
+# Generate UUID
+generate_uuid() {
+    if command -v uuidgen &> /dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    else
+        cat /proc/sys/kernel/random/uuid 2>/dev/null || \
+        python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || \
+        echo "$(date +%s)-$$-${RANDOM}"
+    fi
+}
+
+# Add session to database
+add_session() {
+    local code="$1"
+    local uuid="$2"
+    local name="$3"
+    local workdir="$4"
+
+    echo "${code}|${uuid}|${name}|${workdir}|$(date +%s)" >> "${SESSIONS_DB}"
+}
+
+# Compress and save session context
+save_context() {
+    local uuid="$1"
+    local session_file="${SESSIONS_DIR}/${uuid}.json"
+    local context_file="${CONTEXT_DIR}/${uuid}.ctx.gz"
+
+    if [[ -f "${session_file}" ]]; then
+        # Compress session data
+        gzip -c "${session_file}" > "${context_file}.tmp"
+        mv "${context_file}.tmp" "${context_file}"
+
+        # Also save a snapshot with timestamp
+        local snapshot="${CONTEXT_DIR}/${uuid}.$(date +%s).snapshot.gz"
+        cp "${context_file}" "${snapshot}"
+
+        # Keep only last 5 snapshots
+        ls -t "${CONTEXT_DIR}/${uuid}".*.snapshot.gz 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+
+        echo -e "${GREEN}✓${NC} Context saved and compressed"
+    fi
+}
+
+# Restore session context
+restore_context() {
+    local uuid="$1"
+    local context_file="${CONTEXT_DIR}/${uuid}.ctx.gz"
+    local session_file="${SESSIONS_DIR}/${uuid}.json"
+
+    if [[ -f "${context_file}" ]]; then
+        gzip -dc "${context_file}" > "${session_file}"
+        echo -e "${GREEN}✓${NC} Context restored"
+        return 0
+    fi
+
+    return 1
+}
+
+# Get session by code
+get_session() {
+    local code="$1"
+    grep "^${code}|" "${SESSIONS_DB}" 2>/dev/null || true
+}
+
+# Get session field
+get_field() {
+    local line="$1"
+    local field="$2"
+    echo "${line}" | awk -F'|' "{print \$${field}}"
+}
+
+# Get session status and context info
+get_session_info() {
+    local uuid="$1"
+    local session_file="${SESSIONS_DIR}/${uuid}.json"
+
+    if [[ ! -f "${session_file}" ]]; then
+        echo "new|0|0"
+        return
+    fi
+
+    # Try to extract context info from session file
+    local status="active"
+    local context_used="0"
+    local context_total="0"
+
+    # This is a placeholder - adjust based on actual Claude session file format
+    if command -v jq &> /dev/null && [[ -f "${session_file}" ]]; then
+        context_used=$(jq -r '.context_used // 0' "${session_file}" 2>/dev/null || echo "0")
+        context_total=$(jq -r '.context_total // 0' "${session_file}" 2>/dev/null || echo "0")
+    fi
+
+    echo "${status}|${context_used}|${context_total}"
+}
+
+# List all sessions
+list_sessions() {
+    if [[ ! -s "${SESSIONS_DB}" ]]; then
+        echo -e "${YELLOW}No sessions found${NC}"
+        return
+    fi
+
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${NC}  ${GREEN}Code${NC}  ${BLUE}UUID${NC}                                     ${YELLOW}Name${NC}             ${NC}"
+    echo -e "${CYAN}║${NC}  ${GREEN}    ${NC}  ${BLUE}    ${NC}                                     ${YELLOW}    ${NC}             ${NC}"
+    echo -e "${CYAN}╠════════════════════════════════════════════════════════════════════════════╣${NC}"
+
+    while IFS='|' read -r code uuid name workdir created; do
+        local info=$(get_session_info "${uuid}")
+        local status=$(echo "${info}" | cut -d'|' -f1)
+        local ctx_used=$(echo "${info}" | cut -d'|' -f2)
+        local ctx_total=$(echo "${info}" | cut -d'|' -f3)
+
+        # Truncate long names and paths
+        local display_name="${name:0:20}"
+        local display_workdir="${workdir/$HOME/~}"
+        if [[ ${#display_workdir} -gt 40 ]]; then
+            display_workdir="...${display_workdir: -37}"
+        fi
+
+        printf "${CYAN}║${NC}  ${GREEN}%-4s${NC}  ${BLUE}%-36s${NC}  ${YELLOW}%-20s${NC}\n" \
+            "${code}" "${uuid}" "${display_name}"
+        printf "${CYAN}║${NC}        ${NC}%-60s${NC}\n" "📁 ${display_workdir}"
+
+        if [[ "${status}" != "new" ]]; then
+            if [[ "${ctx_total}" -gt 0 ]]; then
+                local pct=$((ctx_used * 100 / ctx_total))
+                printf "${CYAN}║${NC}        ${NC}Status: %-10s Context: %d/%d (%d%%)${NC}\n" \
+                    "${status}" "${ctx_used}" "${ctx_total}" "${pct}"
+            else
+                printf "${CYAN}║${NC}        ${NC}Status: %-10s${NC}\n" "${status}"
+            fi
+        fi
+
+        echo -e "${CYAN}╠════════════════════════════════════════════════════════════════════════════╣${NC}"
+    done < "${SESSIONS_DB}"
+
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+}
+
+# Delete session
+delete_session() {
+    local code="$1"
+    local session=$(get_session "${code}")
+
+    if [[ -z "${session}" ]]; then
+        echo -e "${RED}Session '${code}' not found${NC}"
+        exit 1
+    fi
+
+    local uuid=$(get_field "${session}" 2)
+    local name=$(get_field "${session}" 3)
+
+    echo -e "${YELLOW}Delete session '${name}' (${code})? [y/N]${NC}"
+    read -r confirm
+
+    if [[ "${confirm}" =~ ^[Yy]$ ]]; then
+        # Remove from database
+        grep -v "^${code}|" "${SESSIONS_DB}" > "${SESSIONS_DB}.tmp" || true
+        mv "${SESSIONS_DB}.tmp" "${SESSIONS_DB}"
+
+        # Remove session file if exists
+        rm -f "${SESSIONS_DIR}/${uuid}.json"
+        rm -f "${CONTEXT_DIR}/${uuid}".*.gz
+
+        echo -e "${GREEN}Session deleted${NC}"
+    else
+        echo -e "${YELLOW}Cancelled${NC}"
+    fi
+}
+
+# Create a session chain
+create_chain() {
+    local chain_name=""
+    local sessions=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name)
+                chain_name="$2"
+                shift 2
+                ;;
+            *)
+                sessions+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "${chain_name}" ]]; then
+        echo -e "${CYAN}Enter chain name:${NC} "
+        read -r chain_name
+    fi
+
+    if [[ ${#sessions[@]} -eq 0 ]]; then
+        echo -e "${CYAN}Enter session codes (space-separated):${NC} "
+        read -ra sessions
+    fi
+
+    # Validate all sessions exist
+    for code in "${sessions[@]}"; do
+        if [[ ! "${code}" =~ ^[a-z]{2}$ ]]; then
+            echo -e "${RED}Invalid session code: ${code}${NC}"
+            exit 1
+        fi
+
+        local session=$(get_session "${code}")
+        if [[ -z "${session}" ]]; then
+            echo -e "${RED}Session not found: ${code}${NC}"
+            exit 1
+        fi
+    done
+
+    # Generate chain code
+    local chain_code=$(generate_code_from_name "${chain_name}")
+
+    # Store chain
+    local chain_data="${chain_code}|${chain_name}|${sessions[*]}|$(date +%s)"
+    echo "${chain_data}" >> "${CHAINS_DB}"
+
+    echo -e "${GREEN}Created chain '${chain_name}' (${chain_code})${NC}"
+    echo -e "${CYAN}Pipeline:${NC} ${sessions[*]}"
+}
+
+# List chains
+list_chains() {
+    if [[ ! -s "${CHAINS_DB}" ]]; then
+        echo -e "${YELLOW}No chains found${NC}"
+        return
+    fi
+
+    echo -e "${MAGENTA}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${MAGENTA}║${NC}  ${GREEN}Code${NC}  ${YELLOW}Name${NC}                    ${CYAN}Pipeline${NC}                              ${NC}"
+    echo -e "${MAGENTA}╠════════════════════════════════════════════════════════════════════════════╣${NC}"
+
+    while IFS='|' read -r code name session_codes created; do
+        printf "${MAGENTA}║${NC}  ${GREEN}%-4s${NC}  ${YELLOW}%-22s${NC}  ${CYAN}%-42s${NC}\n" \
+            "${code}" "${name:0:22}" "${session_codes}"
+    done < "${CHAINS_DB}"
+
+    echo -e "${MAGENTA}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+}
+
+# Execute a session chain
+execute_chain() {
+    local chain_code="$1"
+    shift
+    local initial_input="$*"
+
+    # Find chain
+    local chain=$(grep "^${chain_code}|" "${CHAINS_DB}" 2>/dev/null || true)
+
+    if [[ -z "${chain}" ]]; then
+        echo -e "${RED}Chain '${chain_code}' not found${NC}"
+        exit 1
+    fi
+
+    local chain_name=$(echo "${chain}" | cut -d'|' -f2)
+    local session_codes=($(echo "${chain}" | cut -d'|' -f3))
+
+    echo -e "${MAGENTA}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${MAGENTA}║${NC} Executing chain: ${YELLOW}${chain_name}${NC}"
+    echo -e "${MAGENTA}║${NC} Pipeline: ${CYAN}${session_codes[*]}${NC}"
+    echo -e "${MAGENTA}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    # Get initial input if not provided
+    if [[ -z "${initial_input}" ]]; then
+        echo -e "${CYAN}Enter input for the chain:${NC}"
+        initial_input=$(cat)
+    fi
+
+    local current_input="${initial_input}"
+
+    # Execute each session in the chain
+    for ((i=0; i<${#session_codes[@]}; i++)); do
+        local session_code="${session_codes[$i]}"
+        local session=$(get_session "${session_code}")
+
+        if [[ -z "${session}" ]]; then
+            echo -e "${RED}Session ${session_code} not found in chain${NC}"
+            exit 1
+        fi
+
+        local uuid=$(get_field "${session}" 2)
+        local name=$(get_field "${session}" 3)
+        local workdir=$(get_field "${session}" 4)
+
+        # Expand ~ to home directory
+        workdir="${workdir/#\~/$HOME}"
+
+        echo -e "${BLUE}[$((i+1))/${#session_codes[@]}]${NC} ${GREEN}${name}${NC} (${session_code})"
+        echo -e "${CYAN}Input length:${NC} ${#current_input} chars"
+
+        # Truncate input to character limit
+        if [[ ${#current_input} -gt ${CHAIN_CHAR_LIMIT} ]]; then
+            echo -e "${YELLOW}⚠ Truncating input from ${#current_input} to ${CHAIN_CHAR_LIMIT} chars${NC}"
+            current_input="${current_input:0:${CHAIN_CHAR_LIMIT}}"
+        fi
+
+        # Create temp files for input/output
+        local input_file=$(mktemp)
+        local output_file=$(mktemp)
+
+        echo "${current_input}" > "${input_file}"
+
+        # Execute session with input
+        (
+            cd "${workdir}" 2>/dev/null || cd "${PWD}"
+            echo "${current_input}" | "${CLAUDE_BIN}" --session-id "${uuid}" --headless > "${output_file}" 2>&1 || true
+        )
+
+        # Read output
+        current_input=$(cat "${output_file}")
+
+        # Cleanup
+        rm -f "${input_file}" "${output_file}"
+
+        echo -e "${CYAN}Output length:${NC} ${#current_input} chars"
+        echo ""
+    done
+
+    echo -e "${MAGENTA}╔════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${MAGENTA}║${NC} ${GREEN}Final Output${NC}"
+    echo -e "${MAGENTA}╚════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "${current_input}"
+}
+
+# Delete chain
+delete_chain() {
+    local code="$1"
+    local chain=$(grep "^${code}|" "${CHAINS_DB}" 2>/dev/null || true)
+
+    if [[ -z "${chain}" ]]; then
+        echo -e "${RED}Chain '${code}' not found${NC}"
+        exit 1
+    fi
+
+    local name=$(echo "${chain}" | cut -d'|' -f2)
+
+    echo -e "${YELLOW}Delete chain '${name}' (${code})? [y/N]${NC}"
+    read -r confirm
+
+    if [[ "${confirm}" =~ ^[Yy]$ ]]; then
+        grep -v "^${code}|" "${CHAINS_DB}" > "${CHAINS_DB}.tmp" || true
+        mv "${CHAINS_DB}.tmp" "${CHAINS_DB}"
+        echo -e "${GREEN}Chain deleted${NC}"
+    else
+        echo -e "${YELLOW}Cancelled${NC}"
+    fi
+}
+
+# Start new session
+new_session() {
+    local name=""
+    local workdir="${PWD}"
+    local claude_args=()
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name)
+                name="$2"
+                shift 2
+                ;;
+            -d|--dir)
+                workdir="$2"
+                shift 2
+                ;;
+            --)
+                shift
+                claude_args=("$@")
+                break
+                ;;
+            *)
+                echo -e "${RED}Unknown option: $1${NC}"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Prompt for name if not provided
+    if [[ -z "${name}" ]]; then
+        echo -e "${CYAN}Enter session name:${NC} "
+        read -r name
+    fi
+
+    if [[ -z "${name}" ]]; then
+        echo -e "${RED}Session name cannot be empty${NC}"
+        exit 1
+    fi
+
+    # Confirm working directory
+    echo -e "${CYAN}Working directory:${NC} ${workdir}"
+    echo -e "${YELLOW}Use this directory? [Y/n]${NC} "
+    read -r confirm
+
+    if [[ "${confirm}" =~ ^[Nn]$ ]]; then
+        echo -e "${CYAN}Enter working directory:${NC} "
+        read -r workdir
+    fi
+
+    # Expand ~ to home directory
+    workdir="${workdir/#\~/$HOME}"
+
+    if [[ ! -d "${workdir}" ]]; then
+        echo -e "${RED}Directory does not exist: ${workdir}${NC}"
+        exit 1
+    fi
+
+    # Generate session identifiers
+    local code=$(generate_code_from_name "${name}")
+    local uuid=$(generate_uuid)
+
+    # Add to database
+    add_session "${code}" "${uuid}" "${name}" "${workdir}"
+
+    echo -e "${GREEN}Created session '${name}' with code ${code}${NC}"
+    echo -e "${BLUE}UUID: ${uuid}${NC}"
+    echo -e "${CYAN}Working directory: ${workdir}${NC}"
+    echo ""
+
+    # Start Claude session
+    cd "${workdir}"
+
+    # Set up trap to save context on exit
+    trap "save_context '${uuid}'" EXIT
+
+    if [[ ${#claude_args[@]} -gt 0 ]]; then
+        echo -e "${CYAN}Starting Claude with arguments: ${claude_args[*]}${NC}"
+        exec "${CLAUDE_BIN}" --session-id "${uuid}" "${claude_args[@]}"
+    else
+        exec "${CLAUDE_BIN}" --session-id "${uuid}"
+    fi
+}
+
+# Resume existing session
+resume_session() {
+    local code="$1"
+    shift
+    local claude_args=("$@")
+
+    local session=$(get_session "${code}")
+
+    if [[ -z "${session}" ]]; then
+        echo -e "${RED}Session '${code}' not found${NC}"
+        echo ""
+        echo -e "${YELLOW}Available sessions:${NC}"
+        list_sessions
+        exit 1
+    fi
+
+    local uuid=$(get_field "${session}" 2)
+    local name=$(get_field "${session}" 3)
+    local workdir=$(get_field "${session}" 4)
+
+    # Expand ~ to home directory
+    workdir="${workdir/#\~/$HOME}"
+
+    echo -e "${GREEN}Resuming session '${name}' (${code})${NC}"
+    echo -e "${BLUE}UUID: ${uuid}${NC}"
+    echo -e "${CYAN}Working directory: ${workdir}${NC}"
+
+    # Restore context if available
+    restore_context "${uuid}" || echo -e "${YELLOW}No saved context found, starting fresh${NC}"
+    echo ""
+
+    # Change to working directory
+    if [[ -d "${workdir}" ]]; then
+        cd "${workdir}"
+    else
+        echo -e "${YELLOW}Warning: Working directory no longer exists: ${workdir}${NC}"
+        echo -e "${YELLOW}Using current directory instead${NC}"
+    fi
+
+    # Set up trap to save context on exit
+    trap "save_context '${uuid}'" EXIT
+
+    # Resume Claude session
+    if [[ ${#claude_args[@]} -gt 0 ]]; then
+        echo -e "${CYAN}Starting Claude with arguments: ${claude_args[*]}${NC}"
+        exec "${CLAUDE_BIN}" --session-id "${uuid}" "${claude_args[@]}"
+    else
+        exec "${CLAUDE_BIN}" --session-id "${uuid}"
+    fi
+}
+
+# Show usage
+usage() {
+    cat << EOF
+${CYAN}╔════════════════════════════════════════════════════════════════════════════╗
+║                        Claude Session Manager                                 ║
+╚════════════════════════════════════════════════════════════════════════════╝${NC}
+
+${GREEN}SESSION MANAGEMENT:${NC}
+  claudes new [-n NAME] [-d DIR] [-- ARGS...]    Create new session
+  claudes <code> [-- ARGS...]                    Resume session by code
+  claudes list                                   List all sessions
+  claudes save <code>                            Manually save session context
+  claudes rm <code>                              Delete session
+
+${GREEN}CHAIN MANAGEMENT:${NC}
+  claudes chain create -n NAME <code1> <code2> ...  Create session chain
+  claudes chain <code> [INPUT...]                Execute chain with input
+  claudes chain list                              List all chains
+  claudes chain rm <code>                         Delete chain
+
+${GREEN}EXAMPLES:${NC}
+  ${CYAN}# Create a session (code auto-generated from name)${NC}
+  claudes new -n "Code Review"              → creates session with code 'cr'
+  claudes new -n "my awesome project"       → creates session with code 'ma'
+
+  ${CYAN}# Resume session${NC}
+  claudes cr                                Resume "Code Review" session
+  claudes cr -- --headless "review PR"      Resume with arguments
+
+  ${CYAN}# Create a processing chain${NC}
+  claudes chain create -n "summarizer" aa bb cc
+  claudes chain su "Long text to summarize..."
+
+  ${CYAN}# Interactive chain${NC}
+  echo "analyze this code" | claudes chain su
+
+${GREEN}SESSION CODES:${NC}
+  • 2-character codes (a-z only, 676 max sessions)
+  • Intelligently generated from session names:
+    - "My Project" → mp (first letters)
+    - "awesome" → aw (first two letters)
+    - "testing" → tg (first & last letters)
+
+${GREEN}CONTEXT MANAGEMENT:${NC}
+  • Sessions auto-save context on exit
+  • Context is compressed with gzip
+  • Last 5 snapshots kept per session
+  • Context auto-restored on resume
+
+${GREEN}CHAIN PROCESSING:${NC}
+  • Pipe output from one session to another
+  • Each session receives max ${CHAIN_CHAR_LIMIT} chars input
+  • Perfect for multi-stage processing workflows
+  • Example: input → analyze → summarize → format → output
+
+${GREEN}ENVIRONMENT:${NC}
+  CLAUDE_BIN            Path to claude binary (default: claude)
+  CHAIN_CHAR_LIMIT      Max chars between chain stages (default: ${CHAIN_CHAR_LIMIT})
+
+EOF
+}
+
+# Main
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit 0
+    fi
+
+    local command="$1"
+    shift
+
+    case "${command}" in
+        new)
+            new_session "$@"
+            ;;
+        list|ls)
+            list_sessions
+            ;;
+        save)
+            if [[ $# -eq 0 ]]; then
+                echo -e "${RED}Error: Session code required${NC}"
+                echo "Usage: claudes save <code>"
+                exit 1
+            fi
+            local session=$(get_session "$1")
+            if [[ -z "${session}" ]]; then
+                echo -e "${RED}Session '$1' not found${NC}"
+                exit 1
+            fi
+            local uuid=$(get_field "${session}" 2)
+            save_context "${uuid}"
+            ;;
+        rm|delete|del)
+            if [[ $# -eq 0 ]]; then
+                echo -e "${RED}Error: Session code required${NC}"
+                echo "Usage: claudes rm <code>"
+                exit 1
+            fi
+            delete_session "$1"
+            ;;
+        chain)
+            if [[ $# -eq 0 ]]; then
+                echo -e "${RED}Error: Chain subcommand required${NC}"
+                echo "Usage: claudes chain <create|list|rm|<code>>"
+                exit 1
+            fi
+            local subcommand="$1"
+            shift
+            case "${subcommand}" in
+                create)
+                    create_chain "$@"
+                    ;;
+                list|ls)
+                    list_chains
+                    ;;
+                rm|delete|del)
+                    if [[ $# -eq 0 ]]; then
+                        echo -e "${RED}Error: Chain code required${NC}"
+                        echo "Usage: claudes chain rm <code>"
+                        exit 1
+                    fi
+                    delete_chain "$1"
+                    ;;
+                *)
+                    # Assume it's a chain code to execute
+                    if [[ "${subcommand}" =~ ^[a-z]{2}$ ]]; then
+                        execute_chain "${subcommand}" "$@"
+                    else
+                        echo -e "${RED}Unknown chain command: ${subcommand}${NC}"
+                        exit 1
+                    fi
+                    ;;
+            esac
+            ;;
+        help|-h|--help)
+            usage
+            ;;
+        *)
+            # Assume it's a session code
+            if [[ "${command}" =~ ^[a-z]{2}$ ]]; then
+                resume_session "${command}" "$@"
+            else
+                echo -e "${RED}Unknown command or invalid session code: ${command}${NC}"
+                echo -e "${YELLOW}Session codes must be 2 lowercase letters (a-z)${NC}"
+                echo ""
+                usage
+                exit 1
+            fi
+            ;;
+    esac
+}
+
+main "$@"

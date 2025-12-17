@@ -1,0 +1,3 @@
+#/bin/zsh
+#command prints also stderr and stdout
+./example.sh > >(less) 2> (tee errors.log) UI

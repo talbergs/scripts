@@ -24,8 +24,21 @@ sketchybar-minimal/
    ln -sf ~/scripts/rice/sketchybar-minimal ~/.config/sketchybar
    ```
 
-2. **Restart SketchyBar:**
+2. **Configure Aerospace** (REQUIRED for workspace highlighting):
+   
+   Add this to your `~/.aerospace.toml` file:
+   ```toml
+   exec-on-workspace-change = [
+       '/bin/bash', '-c',
+       'sketchybar --trigger aerospace_workspace_change FOCUSED_WORKSPACE=$AEROSPACE_FOCUSED_WORKSPACE'
+   ]
+   ```
+   
+   See [AEROSPACE_SETUP.md](file:///Users/mtalbergs/scripts/rice/sketchybar-minimal/AEROSPACE_SETUP.md) for detailed instructions.
+
+3. **Restart both services:**
    ```bash
+   aerospace reload-config
    brew services restart sketchybar
    ```
 

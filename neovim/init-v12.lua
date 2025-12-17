@@ -67,6 +67,7 @@ vim.lsp.config('lua_ls', {
 vim.cmd.colorscheme("habamax")
 
 vim.pack.add({
+  "https://github.com/clvnkhr/macaltkey.nvim",
   "https://github.com/folke/snacks.nvim",
   "https://github.com/coder/claudecode.nvim",
 
@@ -119,6 +120,25 @@ vim.pack.add({
   -- Dependencies
   "https://github.com/MunifTanjim/nui.nvim",
   "https://github.com/nvim-lua/plenary.nvim",
+})
+
+require"macaltkey".setup({
+    language = "en-US", -- American
+    -- or "en-GB" British. US is default
+
+    modifier = 'aA',
+    -- If this is a single char like 'y', then
+    -- will convert <y-x> or <Y-x> (case insensitive) to the character at option-x.
+    -- also accepts arbitrary strings, e.g. 'abc' will convert
+    -- any of <a-x>, <b-x>, and <c-x> (case sensitive).
+    -- Can be passed to the extra opts table of the
+    -- convenience functions.
+
+    double_set = true,
+    -- If this is true, then will set both the converted
+    -- and unconverted keybind, e.g. both <a-a> and å.
+    -- Can be passed to the extra opts table of the
+    -- convenience functions.
 })
 
 require("treesitter-context").setup({
@@ -358,7 +378,9 @@ cmp.setup({
 -- require("copilot_cmp").setup()
 
 -- General Keymaps
-local map = vim.keymap.set
+-- local map = vim.keymap.set
+local mak = require"macaltkey"
+local map = mak.keymap.set
 
 -- DAP
 map("n", "<leader>du", function()
@@ -517,11 +539,17 @@ map("n", "<c-e>", "2<c-e>", { desc = "Scroll: Down" })
 map("n", "<a-=>", ":cnext<cr>", { silent = true, desc = "Quickfix: Next" })
 map("n", "<a-->", ":cprev<cr>", { silent = true, desc = "Quickfix: Previous" })
 
+-- MAC
+  -- nnoremap ≠ <your-command>  " Alt+=
+  -- nnoremap – <your-command>  " Alt+-
+
 -- Tabs
 map("n", "<a->>", ":tabmove +1<cr>", { silent = true, desc = "Tabs: Move Right" })
 map("n", "<a-<>", ":tabmove -1<cr>", { silent = true, desc = "Tabs: Move Left" })
 map("n", "<a-k>", ":tabnext<cr>", { silent = true, desc = "Tabs: Next" })
 map("n", "<a-j>", ":tabprev<cr>", { silent = true, desc = "Tabs: Previous" })
+vim.keymap.set("n", "<c-0>", ":tabnext<cr>", { silent = true, desc = "Tabs: Next" })
+vim.keymap.set("n", "<c-9>", ":tabprev<cr>", { silent = true, desc = "Tabs: Previous" })
 
 -- Window Resize
 map("n", "<c-right>", ":vertical resize +5<cr>", { silent = true, desc = "Window: Resize Vertical +" })
