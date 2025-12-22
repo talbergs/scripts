@@ -38,7 +38,7 @@ function fish_shell_depth
                 set parent_pid $parent
             end
         end
-        echo -n (set_color brblack)"$shells"(set_color yellow)"fish"(set_color brblack)" (lvl "(math $SHLVL)")"(set_color normal)
+        echo -n (set_color brblack)"$shells"(set_color yellow)"fish"(set_color brblack)" "(set_color normal)
     end
 end
 # }}}
@@ -187,7 +187,6 @@ function fish_right_prompt
         return
     end
     fish_shell_depth
-    echo
     fish_cmd_duration
 end
 

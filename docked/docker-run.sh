@@ -3,9 +3,10 @@
 # Run i18n-diff-2 in Docker
 #
 # Usage:
-#   ./docker-run.sh [options]
+#   ./docker-run.sh                    # Auto-detect ticket from HEAD commit
 #   ./docker-run.sh --help
 #   ./docker-run.sh HEAD~3 HEAD
+#   ./docker-run.sh release/7.4 master
 #   ./docker-run.sh --json origin/main HEAD
 #   ./docker-run.sh --ticket PROJ-123
 #   ./docker-run.sh -t JIRA-456 --json

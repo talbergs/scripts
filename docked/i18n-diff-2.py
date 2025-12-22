@@ -85,8 +85,45 @@ class GitHelper:
         return None
 
     @staticmethod
+    def extract_ticket_from_commit(ref: str = "HEAD") -> Optional[str]:
+        """Extract ticket identifier from commit message
+
+        Looks for patterns like [ZBXNEXT-826], [DEV-4678], etc.
+        Returns the ticket identifier without brackets, or None if not found.
+        """
+        import re
+
+        result = GitHelper.run_git(["log", "-1", "--format=%s", ref], check=False)
+        if result.returncode != 0:
+            return None
+
+        commit_msg = result.stdout.strip()
+
+        # Match patterns like [PROJ-123], [ZBXNEXT-826], [DEV-4678]
+        # Pattern: [WORD-DIGITS] at start or anywhere in message
+        match = re.search(r'\[([A-Z][A-Z0-9]+-\d+)\]', commit_msg)
+        if match:
+            return match.group(1)
+
+        return None
+
+    @staticmethod
     def find_merge_base() -> Tuple[str, str]:
-        """Auto-detect comparison refs based on branch history"""
+        """Auto-detect comparison refs based on branch history
+
+        First tries to detect ticket from HEAD and find its range.
+        Falls back to merge-base detection if no ticket found.
+        """
+        # Try to detect ticket from HEAD commit
+        ticket = GitHelper.extract_ticket_from_commit("HEAD")
+        if ticket:
+            try:
+                print(f"Detected ticket from HEAD: {ticket}", file=sys.stderr)
+                return GitHelper.find_ticket_range(ticket)
+            except RuntimeError as e:
+                print(f"Ticket detection failed: {e}", file=sys.stderr)
+                print("Falling back to merge-base detection...", file=sys.stderr)
+
         current_branch_result = GitHelper.run_git(
             ["rev-parse", "--abbrev-ref", "HEAD"]
         )
@@ -198,8 +235,11 @@ class GitHelper:
     @staticmethod
     def extract_files(ref: str, target_dir: Path) -> List[Path]:
         """Extract PHP files from a git ref to target directory"""
-        archive_path = target_dir / f"{ref}.tar"
-        extract_dir = target_dir / ref
+        # Sanitize ref name for use in file paths (replace / with -)
+        safe_ref = ref.replace('/', '-').replace('\\', '-')
+
+        archive_path = target_dir / f"{safe_ref}.tar"
+        extract_dir = target_dir / safe_ref
 
         GitHelper.run_git(["archive", ref, "-o", str(archive_path)])
 
@@ -466,10 +506,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Compare translation strings between git commits",
         epilog="Examples:\n"
-               "  %(prog)s                    # Auto-detect refs\n"
+               "  %(prog)s                    # Auto-detect ticket from HEAD or use merge-base\n"
                "  %(prog)s HEAD^ HEAD         # Compare last commit\n"
                "  %(prog)s --json abc123 HEAD # JSON output\n"
-               "  %(prog)s --ticket PROJ-123  # Compare all commits with ticket\n",
+               "  %(prog)s --ticket PROJ-123  # Compare all commits with ticket\n"
+               "  %(prog)s release/7.4 master # Compare branches (slashes OK)\n",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("then_ref", nargs="?", help="Old git ref (auto-detected if not provided)")
@@ -521,13 +562,17 @@ def main():
 
             extractor = TranslationExtractor()
 
+            # Sanitize ref names for directory paths (must match extract_files)
+            safe_then_ref = then_ref.replace('/', '-').replace('\\', '-')
+            safe_now_ref = now_ref.replace('/', '-').replace('\\', '-')
+
             if args.verbose:
                 print(f"Parsing {len(then_files)} files from {then_ref}...", file=sys.stderr)
-            then_strings = extractor.extract_from_files(then_files, tmp_path / then_ref)
+            then_strings = extractor.extract_from_files(then_files, tmp_path / safe_then_ref)
 
             if args.verbose:
                 print(f"Parsing {len(now_files)} files from {now_ref}...", file=sys.stderr)
-            now_strings = extractor.extract_from_files(now_files, tmp_path / now_ref)
+            now_strings = extractor.extract_from_files(now_files, tmp_path / safe_now_ref)
 
             added, removed = StringComparator.compare(then_strings, now_strings)
 
