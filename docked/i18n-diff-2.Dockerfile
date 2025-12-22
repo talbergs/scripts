@@ -20,6 +20,9 @@ RUN git config --global --add safe.directory '*'
 # Create working directory
 WORKDIR /workspace
 
+# Cache-busting argument to force rebuild
+ARG CACHEBUST=1
+
 # Copy the Python script
 COPY i18n-diff-2.py /usr/local/bin/i18n-diff-2
 COPY i18n-diff-2.sh /usr/local/bin/check-strings

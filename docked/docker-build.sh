@@ -13,7 +13,11 @@ echo "Building Docker image: ${IMAGE_NAME}:${IMAGE_TAG}"
 echo "Building from: $SCRIPT_DIR"
 echo ""
 
+# Use timestamp to bust cache and ensure latest code is copied
+CACHEBUST=$(date +%s)
+
 docker build \
+    --build-arg CACHEBUST="${CACHEBUST}" \
     --tag "${IMAGE_NAME}:${IMAGE_TAG}" \
     --file "${SCRIPT_DIR}/i18n-diff-2.Dockerfile" \
     "${SCRIPT_DIR}"

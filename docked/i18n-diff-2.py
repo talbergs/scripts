@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 try:
     from tree_sitter import Language, Parser, Node
-    import tree_sitter_php
+    import tree_sitter_php as ts_php
 except ImportError:
     print("Error: Required dependencies not found.", file=sys.stderr)
     print("Install with: pip install tree-sitter tree-sitter-php", file=sys.stderr)
@@ -221,7 +221,18 @@ class TranslationExtractor:
 
     def __init__(self):
         self.parser = Parser()
-        php_language = Language(tree_sitter_php.language())
+        # tree-sitter-php 0.23.0+ API
+        try:
+            # Try the new API first (0.23.0+)
+            php_language = Language(ts_php.language_php())
+        except AttributeError:
+            try:
+                # Fallback to older API
+                php_language = Language(ts_php.language())
+            except AttributeError:
+                # Final fallback - direct language access
+                import tree_sitter_php
+                php_language = Language(tree_sitter_php.PHP_LANGUAGE)
         self.parser.language = php_language
 
     def parse_php_file(self, content: bytes) -> Optional[Node]:

@@ -61,4 +61,4 @@ function scripts:init
 end
 EOF
 
-fish -C "source $bindir/../fish/config.fish && source '$shellenv'" $@
+fish -C "source $bindir/../fish/config-v42.fish && source '$shellenv'" $@
