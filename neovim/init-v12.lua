@@ -64,10 +64,26 @@ vim.lsp.config('lua_ls', {
 })
 -- }}}
 
+-- @CLAUDE_TODO function accepts {"https://github.com/clvnkhr/macaltkey.nvim", "https://github.com/folke/snacks.nvim", "https://github.com/coder/claudecode.nvim", function() print("initializing claudecode") end, "more packages url..., more csetup callbacks"} - the function returns the same list without functions calls, instead the function call will be invokable later.
+vim.user = {
+  _pack_cb = {},
+  set_cb_packs = function(packs)
+    -- sets callables of packs into vim.user._pack_cb
+    -- returns packs without callables, just strings
+  end,
+  exec_cb_packs = function()
+    -- invokes callables at vim.user._pack_cb
+  end,
+}
+
+-- Native vim.pack.add
+-- + dependencies
+-- + init-fn
 vim.cmd.colorscheme("habamax")
 
 vim.pack.add({
   "https://github.com/clvnkhr/macaltkey.nvim",
+  --== CLAUDE CODE
   "https://github.com/folke/snacks.nvim",
   "https://github.com/coder/claudecode.nvim",
 

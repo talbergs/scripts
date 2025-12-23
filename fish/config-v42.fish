@@ -1,5 +1,29 @@
 # vim: foldmethod=marker
 
+# {{{ COLORSCHEME - Calm Pastel (editable)
+# Available colors: black, red, green, yellow, blue, magenta, cyan, white
+# Prefix with 'br' for bright variants (brblack, brred, etc.)
+# Add '--bold' after color for bold text
+# Hex equivalents (terminal-dependent): black=#000000 red=#CC0000 green=#00CC00
+# yellow=#CCCC00 blue=#0000CC magenta=#CC00CC cyan=#00CCCC white=#CCCCCC
+# Bright: brblack=#808080 brred=#FF0000 brgreen=#00FF00 bryellow=#FFFF00
+# brblue=#0000FF brmagenta=#FF00FF brcyan=#00FFFF brwhite=#FFFFFF
+
+set -g color_prompt_user cyan --bold      # #00CCCC bold
+set -g color_prompt_root red --bold       # #CC0000 bold
+set -g color_pwd blue                     # #0000CC
+set -g color_git_branch green             # #00CC00
+set -g color_git_state magenta            # #CC00CC
+set -g color_error red                    # #CC0000
+set -g color_job_running green            # #00CC00
+set -g color_job_stopped yellow           # #CCCC00
+set -g color_duration yellow              # #CCCC00
+set -g color_time cyan                    # #00CCCC
+set -g color_muted brblack                # #808080
+set -g color_shell_chain brblack          # #808080
+set -g color_shell_current yellow         # #CCCC00
+# }}}
+
 # {{{ FG/BG toggle
 bind \cz 'fg' # <c-k> to toggle-nvim workflow (dropshell)
 # }}}
@@ -22,7 +46,7 @@ function fish_greeting
 end
 # }}}
 
-# {{{ PROMPT - rightside - shell-depth and shell paths (i.e. zsh -> fish  -> fish (lvl 3)
+# {{{ PROMPT - rightside - shell-depth and shell paths (i.e. zsh -> fish  -> fish)
 function fish_shell_depth
     set -l depth (math $SHLVL - 1)
     if test $depth -gt 0
@@ -38,12 +62,12 @@ function fish_shell_depth
                 set parent_pid $parent
             end
         end
-        echo -n (set_color brblack)"$shells"(set_color yellow)"fish"(set_color brblack)" "(set_color normal)
+        echo -n (set_color $color_shell_chain)"$shells"(set_color $color_shell_current)"fish"(set_color $color_muted)" "(set_color normal)
     end
 end
 # }}}
 
-# {{{ PROMPT - rightside - command duration (Y-m-d [H:i:s -> H:i:s](~24s) (wall/usr/sys)
+# {{{ PROMPT - rightside - command duration (Y-m-d [H:i:s -> H:i:s](~24s) (wall/usr/sys) if > 1000ms
 set -g __cmd_start_time 0
 set -g __cmd_start_date ""
 
@@ -70,7 +94,7 @@ function fish_cmd_duration
         end
 
         set -l date_str (date "+%Y-%m-%d")
-        echo -n (set_color brblack)"$date_str ["(set_color cyan)"$__cmd_start_date"(set_color brblack)" → "(set_color cyan)"$end_time"(set_color brblack)"](~"(set_color yellow)"$dur_str"(set_color brblack)")"(set_color normal)
+        echo -n (set_color $color_muted)"$date_str ["(set_color $color_time)"$__cmd_start_date"(set_color $color_muted)" → "(set_color $color_time)"$end_time"(set_color $color_muted)"](~"(set_color $color_duration)"$dur_str"(set_color $color_muted)")"(set_color normal)
     end
 end
 # }}}
@@ -79,18 +103,18 @@ end
 function fish_bg_jobs
     set -l job_list (jobs)
     if test (count $job_list) -gt 0
-        echo (set_color brblack)"─── jobs ───"(set_color normal)
+        echo (set_color $color_muted)"─── jobs ───"(set_color normal)
         for job in $job_list
             set -l job_num (echo $job | string match -r '^\s*(\d+)' --groups-only)
             set -l job_state (echo $job | string match -r '(running|stopped)' --groups-only)
             set -l job_cmd (echo $job | string replace -r '^.*\t' '' | string sub -l 30)
             if test "$job_state" = "running"
-                echo (set_color green)"  ◆ "(set_color brblack)"[$job_num] "(set_color normal)"$job_cmd"
+                echo (set_color $color_job_running)"  ◆ "(set_color $color_muted)"[$job_num] "(set_color normal)"$job_cmd"
             else
-                echo (set_color yellow)"  ◇ "(set_color brblack)"[$job_num] "(set_color normal)"$job_cmd"
+                echo (set_color $color_job_stopped)"  ◇ "(set_color $color_muted)"[$job_num] "(set_color normal)"$job_cmd"
             end
         end
-        echo (set_color brblack)"────────────"(set_color normal)
+        echo (set_color $color_muted)"────────────"(set_color normal)
     end
 end
 # }}}
@@ -99,7 +123,7 @@ end
 function fish_status_indicator
     set -l last_status $argv[1]
     if test $last_status -ne 0
-        echo -n (set_color red)"× $last_status "(set_color normal)
+        echo -n (set_color $color_error --bold)" [ × $last_status ] "(set_color normal)
     end
 end
 # }}}
@@ -107,7 +131,7 @@ end
 # {{{ PROMPT - leftside - pull PWD path in transient shell
 function fish_pwd_display
     set -l pwd_path (string replace -r "^$HOME" "~" $PWD)
-    echo -n (set_color blue)"$pwd_path"(set_color normal)
+    echo -n (set_color $color_pwd)"$pwd_path"(set_color normal)
 end
 # }}}
 
@@ -121,24 +145,24 @@ function fish_git_info
     set -l git_state ""
 
     if test -d .git/rebase-merge -o -d .git/rebase-apply
-        set git_state (set_color magenta)"REBASING"
+        set git_state (set_color $color_git_state)"REBASING"
     else if test -f .git/MERGE_HEAD
-        set git_state (set_color magenta)"MERGING"
+        set git_state (set_color $color_git_state)"MERGING"
     else if test -f .git/CHERRY_PICK_HEAD
-        set git_state (set_color magenta)"CHERRY-PICKING"
+        set git_state (set_color $color_git_state)"CHERRY-PICKING"
     else if test -f .git/BISECT_LOG
-        set git_state (set_color magenta)"BISECTING"
+        set git_state (set_color $color_git_state)"BISECTING"
     end
 
     if test -z "$branch"
         set branch (git rev-parse --short HEAD 2>/dev/null)
     end
 
-    echo -n (set_color brblack)" ("(set_color green)"$branch"
+    echo -n (set_color $color_muted)" ("(set_color $color_git_branch)"$branch"
     if test -n "$git_state"
-        echo -n (set_color brblack)"|$git_state"
+        echo -n (set_color $color_muted)"|$git_state"
     end
-    echo -n (set_color brblack)")"(set_color normal)
+    echo -n (set_color $color_muted)")"(set_color normal)
 end
 # }}}
 
@@ -163,9 +187,9 @@ function fish_prompt
     if test "$__fish_transient_prompt" = "1"
         set -g __fish_transient_prompt 0
         if test (id -u) -eq 0
-            echo -n (set_color red)"⋕ "(set_color normal)
+            echo -n (set_color $color_prompt_root)"⋕ "(set_color normal)
         else
-            echo -n (set_color cyan)"⊱⋅"(set_color normal)
+            echo -n (set_color $color_prompt_user)"⊱⋅"(set_color normal)
         end
         return
     end
@@ -176,9 +200,9 @@ function fish_prompt
     fish_git_info
     echo
     if test (id -u) -eq 0
-        echo -n (set_color red)"⋕ "(set_color normal)
+        echo -n (set_color $color_prompt_root)"⋕ "(set_color normal)
     else
-        echo -n (set_color cyan)"⊱⋅"(set_color normal)
+        echo -n (set_color $color_prompt_user)"⊱⋅"(set_color normal)
     end
 end
 
@@ -186,8 +210,12 @@ function fish_right_prompt
     if test "$__fish_transient_prompt" = "1"
         return
     end
-    fish_shell_depth
-    fish_cmd_duration
+    # Show duration if command took longer than 1 second, otherwise show shell depth
+    if test $CMD_DURATION -gt 1000
+        fish_cmd_duration
+    else
+        fish_shell_depth
+    end
 end
 
 function fish_transient_execute
