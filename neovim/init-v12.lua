@@ -1,46 +1,6 @@
 -- vim: foldmethod=marker ts=2 sw=2
---
--- TODO: mcp chromium-web-devtools integration 
--- workflow: on Jira task press record, reproduce bug, stop recording, upload to Jira ticket
---
---
+
 -- {{ v0.12.0 lsp setup 101 }} {{{
-vim.pack.add { -- Neovim init file using built-in package management (v0.12+)
-	{ src = 'https://github.com/neovim/nvim-lspconfig' }, -- still using this
-	{ src = 'https://github.com/mason-org/mason.nvim' },
-	{ src = 'https://github.com/mason-org/mason-lspconfig.nvim' },
-	{ src = 'https://github.com/WhoIsSethDaniel/mason-tool-installer.nvim' },
-}
-
-local ensure_installed = {
-    "lua_ls",
-    "stylua",
-    -- "gopls",
-    "intelephense",
-    "phpcs",
-    "phpcbf",
-    "pyright",
-    "html-lsp",
-    "css-lsp",
-    -- "tsserver",
-    "rust_analyzer",
-}
-
--- vim.lsp.config.go = {
---   default_config = {
---     cmd = { "gopls" },
---     filetypes = { "go", "gomod" },
---     root_dir = require("lspconfig.util").root_pattern("go.work", "go.mod", ".git"),
---     settings = {},
---   },
--- }
-
-require('mason').setup()
-require('mason-lspconfig').setup()
-require('mason-tool-installer').setup({
-	ensure_installed = ensure_installed,
-})
-
 vim.lsp.config('lua_ls', {
 	settings = {
 		Lua = {
@@ -90,29 +50,75 @@ vim.user = {
   end,
 }
 
--- Native vim.pack.add
--- + dependencies
--- + init-fn
 vim.cmd.colorscheme("habamax")
 
 vim.pack.add(vim.user.set_cb_packs {
+  -- {{{ macaltkey
   "https://github.com/clvnkhr/macaltkey.nvim",
+  function()
+    require"macaltkey".setup({
+        language = "en-US", -- American
+        -- or "en-GB" British. US is default
 
-  --== CLAUDE CODE
+        modifier = 'aA',
+        -- If this is a single char like 'y', then
+        -- will convert <y-x> or <Y-x> (case insensitive) to the character at option-x.
+        -- also accepts arbitrary strings, e.g. 'abc' will convert
+        -- any of <a-x>, <b-x>, and <c-x> (case sensitive).
+        -- Can be passed to the extra opts table of the
+        -- convenience functions.
+
+        double_set = true,
+        -- If this is true, then will set both the converted
+        -- and unconverted keybind, e.g. both <a-a> and å.
+        -- Can be passed to the extra opts table of the
+        -- convenience functions.
+    })
+  end,
+  -- }}}
+  -- {{{ CLAUDE CODE
   "https://github.com/folke/snacks.nvim",
   "https://github.com/coder/claudecode.nvim",
   function ()
     require('claudecode').setup()
   end,
-
-  -- LLM/AI Plugins
+  -- }}}
+  -- {{{ LSP/MASON
+	{ src = 'https://github.com/neovim/nvim-lspconfig' }, -- still using this
+	{ src = 'https://github.com/mason-org/mason.nvim' },
+	{ src = 'https://github.com/mason-org/mason-lspconfig.nvim' },
+	{ src = 'https://github.com/WhoIsSethDaniel/mason-tool-installer.nvim' },
+  function ()
+    local ensure_installed = {
+        "lua_ls",
+        "stylua",
+        -- "gopls",
+        "intelephense",
+        "phpcs",
+        "phpcbf",
+        "pyright",
+        "html-lsp",
+        "css-lsp",
+        -- "tsserver",
+        "rust_analyzer",
+    }
+    require('mason').setup()
+    require('mason-lspconfig').setup()
+    require('mason-tool-installer').setup({
+      ensure_installed = ensure_installed,
+    })
+  end,
+  -- }}}
+  -- {{{ LLM/AI Plugins
   "https://github.com/David-Kunz/gen.nvim",
   "https://github.com/Kurama622/llm.nvim",
   "https://github.com/gutsavgupta/nvim-gemini-companion",
-
-  "https://github.com/norcalli/nvim-colorizer.lua", -- Color highlighter
+  -- }}}
+  -- {{{ UX & statusline
+  "https://github.com/norcalli/nvim-colorizer.lua", -- :ColorizerToggle<cr> Color highlighter
   "https://github.com/nvim-lualine/lualine.nvim", -- Statusline
   "https://github.com/nvim-tree/nvim-web-devicons", -- Icons
+  -- }}}
 
   -- Core Functionality
   "https://github.com/echasnovski/mini.nvim", -- Library of minimal plugins
@@ -120,8 +126,29 @@ vim.pack.add(vim.user.set_cb_packs {
   "https://github.com/mbbill/undotree", -- Undo history visualizer
   "https://github.com/nvim-treesitter/nvim-treesitter", -- Treesitter
   "https://github.com/nvim-treesitter/nvim-treesitter-context", -- Treesitter context
+  function()
+    require("treesitter-context").setup({
+        enable = false,
+        multiwindow = true,
+        line_numbers = true,
+    })
+
+    require("nvim-treesitter.configs").setup({
+        ensure_installed = {"go", "lua", "python", "rust", "typescript", "yaml", "json", "nix",
+            "bash", "php", "html", "css", "javascript", "c", "cpp", "markdown",
+        },
+        highlight = {
+            enable = true,
+        },
+    })
+  end,
+  -- <<<<<<<<<<TS
+
   "https://github.com/stevearc/conform.nvim", -- Formatter
   "https://github.com/stevearc/oil.nvim", -- File manager
+  function()
+    require("oil").setup({})
+  end,
   "https://github.com/tpope/vim-commentary", -- Commenting
   "https://github.com/tpope/vim-fugitive", -- Git wrapper
   "https://github.com/ray-x/go.nvim", -- Go plugin
@@ -154,51 +181,18 @@ vim.pack.add(vim.user.set_cb_packs {
   -- Dependencies
   "https://github.com/MunifTanjim/nui.nvim",
   "https://github.com/nvim-lua/plenary.nvim",
-})
 
-require"macaltkey".setup({
-    language = "en-US", -- American
-    -- or "en-GB" British. US is default
+  "https://github.com/stevearc/quicker.nvim",
+  function ()
+    require("quicker").setup()
+  end,
 
-    modifier = 'aA',
-    -- If this is a single char like 'y', then
-    -- will convert <y-x> or <Y-x> (case insensitive) to the character at option-x.
-    -- also accepts arbitrary strings, e.g. 'abc' will convert
-    -- any of <a-x>, <b-x>, and <c-x> (case sensitive).
-    -- Can be passed to the extra opts table of the
-    -- convenience functions.
-
-    double_set = true,
-    -- If this is true, then will set both the converted
-    -- and unconverted keybind, e.g. both <a-a> and å.
-    -- Can be passed to the extra opts table of the
-    -- convenience functions.
-})
-
-require("treesitter-context").setup({
-    enable = false,
-    multiwindow = true,
-    line_numbers = true,
-})
-
-require("nvim-treesitter.configs").setup({
-    ensure_installed = {"go", "lua", "python", "rust", "typescript", "yaml", "json", "nix",
-        "bash", "php", "html", "css", "javascript", "c", "cpp", "markdown",
-    },
-    highlight = {
-        enable = true,
-    },
-})
-
-vim.pack.add({
-    "https://github.com/stevearc/quicker.nvim",
-})
-require("quicker").setup()
-
-vim.pack.add({
   "https://github.com/folke/which-key.nvim",
+  function ()
+    require("which-key").setup({delay=3000})
+  end,
 })
-require("which-key").setup({delay=3000})
+vim.user.exec_cb_packs()
 
 -- {{ Global options }} {{{
 vim.opt.modelineexpr = true
@@ -316,13 +310,6 @@ vim.api.nvim_create_autocmd("FileType", {
 })
 -- }}}
 
--- :Gemini
--- require("gemini").setup({
-  -- cmds = { "gemini", "qwen" }, -- Use both
--- })
-
-require("oil").setup({})
-
 
 -- Keymaps from keymaps_reference.md
 
@@ -393,23 +380,6 @@ cmp.setup({
     end,
   },
 })
-
--- Copilot setup
--- require("copilot").setup({
---   suggestion = {
---     auto_trigger = true,
---     keymap = {
---       accept = "<C-e>",
---       accept_word = false,
---       accept_line = false,
---       next = "<M-]>",
---       prev = "<M-[>",
---       dismiss = "<C-]>",
---     },
---   },
--- })
-
--- require("copilot_cmp").setup()
 
 -- General Keymaps
 -- local map = vim.keymap.set
