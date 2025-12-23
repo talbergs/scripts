@@ -62,6 +62,12 @@ vim.lsp.config('lua_ls', {
 		},
 	},
 })
+
+vim.lsp.config('intelephense', {
+	init_options = {
+		licenceKey = '008RLZPEP6YHQ1P',
+	},
+})
 -- }}}
 
 vim.user = {
@@ -535,11 +541,11 @@ map("n", "<leader>t", ":Telescope lsp_document_symbols<cr>", { silent = true, de
 
 -- Diagnostics
 map("n", "[d", function()
-  vim.diagnostic.jump({ count = -1 })
+  vim.diagnostic.jump({ count = -1, float = true })
 end, { desc = "Diagnostics: Previous" })
 
 map("n", "]d", function()
-  vim.diagnostic.jump({ count = 1 })
+  vim.diagnostic.jump({ count = 1, float = true })
 end, { desc = "Diagnostics: Next" })
 
 -- Navigation
