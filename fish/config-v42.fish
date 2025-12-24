@@ -1,27 +1,19 @@
 # vim: foldmethod=marker
 
 # {{{ COLORSCHEME - Calm Pastel (editable)
-# Available colors: black, red, green, yellow, blue, magenta, cyan, white
-# Prefix with 'br' for bright variants (brblack, brred, etc.)
-# Add '--bold' after color for bold text
-# Hex equivalents (terminal-dependent): black=#000000 red=#CC0000 green=#00CC00
-# yellow=#CCCC00 blue=#0000CC magenta=#CC00CC cyan=#00CCCC white=#CCCCCC
-# Bright: brblack=#808080 brred=#FF0000 brgreen=#00FF00 bryellow=#FFFF00
-# brblue=#0000FF brmagenta=#FF00FF brcyan=#00FFFF brwhite=#FFFFFF
-
-set -g color_prompt_user "#FF00FF" --bold
-set -g color_prompt_root "#CC0000" --bold
+set -g color_prompt_user "#CC00CC" --bold
+set -g color_prompt_root "#CCCC00" --bold
 set -g color_pwd "#A0A0CC"
 set -g color_git_branch "#06CC60"
-set -g color_git_state magenta            # #CC00CC
-set -g color_error red                    # #CC0000
-set -g color_job_running green            # #00CC00
-set -g color_job_stopped yellow           # #CCCC00
-set -g color_duration yellow              # #CCCC00
-set -g color_time cyan                    # #00CCCC
-set -g color_muted brblack                # #808080
-set -g color_shell_chain brblack          # #808080
-set -g color_shell_current yellow         # #CCCC00
+set -g color_git_state "#A0A0CC"
+set -g color_error "#CC0000"
+set -g color_job_running "#06CC60"
+set -g color_job_stopped "#CCCC00"
+set -g color_duration "#CCCC00"
+set -g color_time "#CC00CC"
+set -g color_muted "#808080"
+set -g color_shell_chain "#808080"
+set -g color_shell_current "#CCCC00"
 # }}}
 
 # {{{ FG/BG toggle
