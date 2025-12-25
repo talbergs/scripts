@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Run i18n-diff-2 in Docker
+# Run i18n-diff in Docker
 #
 # Usage:
 #   ./docker-run.sh                    # Auto-detect ticket from HEAD commit
@@ -14,21 +14,111 @@
 
 set -e
 
-IMAGE_NAME="i18n-diff-2"
+IMAGE_NAME="i18n-diff"
 IMAGE_TAG="latest"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Get the current git repository root
-GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
+base_sha=
+head_sha=
+git-refs() {
+    if [[ "$1" != "" ]]
+    then
+        base_sha=$(git rev-parse --short "$1")
+    else
+        local head_tag=$(git log -1 --format='%s' | sed -n -e 's/.*\[\(.*\)\].*/\1/p')
+        if [[ -z "$head_tag" ]]; then
+            echo "Error: HEAD commit has no [tag] in message" >&2
+            exit 1
+        fi
 
-if [ ! -d "$GIT_ROOT/.git" ]; then
+        recent_merge_sha=$(git log --grep "$head_tag" --format='%h' --merges | sed 1q)
+        if [[ "$recent_merge_sha" != "" ]]
+        then
+            base_sha=$(git show "$recent_merge_sha" | sed -n -e '/Merge/p' | cut -d' ' -f 3)
+        else
+            base_sha=$(git log --grep "$head_tag" --format='%h' | tail -n 1)
+        fi
+    fi
+
+    if [[ "$2" != "" ]]
+    then
+        head_sha=$(git rev-parse --short "$2")
+    else
+        head_sha=$(git rev-parse --short HEAD)
+    fi
+
+    echo "Using $head_tag as feature tag found in HEAD($head_sha)." >&2
+    echo "${base_sha} ${head_sha}"
+}
+
+# In contrast to git rev-parse --show-toplevel, this works with git-worktree
+git-root() {
+    git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
+    [[ "$git_common_dir" == "" ]] && echo not in git dir && exit 8
+    echo -n "$(cd "$git_common_dir/.." && pwd)"
+}
+
+if [ ! -d "$(git-root)/.git" ]; then
     echo "Error: Not in a git repository" >&2
     echo "Please run this from within a git repository" >&2
     exit 1
 fi
 
-# Run the Docker container with the git repo mounted
-docker run --rm \
-    -v "${GIT_ROOT}:/workspace" \
-    -w /workspace \
-    "${IMAGE_NAME}:${IMAGE_TAG}" \
-    "$@"
+git-refs $@
+
+TMPDIR=/tmp/i18n-diff
+[[ -d $TMPDIR ]] && rm -rf $TMPDIR
+mkdir -p $TMPDIR/result
+mkdir -p $TMPDIR/head_sha
+mkdir -p $TMPDIR/base_sha
+
+# Extract PHP files from each ref
+extract_php_files() {
+    local ref="$1"
+    local target_dir="$2"
+
+    echo "Extracting PHP files from $ref..." >&2
+
+    # Get list of PHP files at this ref
+    local php_files
+    php_files=$(git ls-tree -r --name-only "$ref" | grep '\.php$' || true)
+
+    if [[ -z "$php_files" ]]; then
+        echo "  No PHP files found at $ref" >&2
+        return
+    fi
+
+    # Extract only PHP files using git archive
+    # shellcheck disable=SC2086
+    git archive "$ref" $php_files | tar -xf - -C "$target_dir"
+
+    local count
+    count=$(echo "$php_files" | wc -l | tr -d ' ')
+    echo "  Extracted $count PHP files" >&2
+}
+
+# Extract in parallel
+extract_php_files "$base_sha" "$TMPDIR/base_sha" &
+pid_base=$!
+extract_php_files "$head_sha" "$TMPDIR/head_sha" &
+pid_head=$!
+
+# Wait for both extractions to complete
+wait $pid_base $pid_head
+
+if ! docker image inspect "${IMAGE_NAME}:${IMAGE_TAG}" >/dev/null 2>&1
+then
+    echo "Image ${IMAGE_NAME}:${IMAGE_TAG} not found, building..." >&2
+    "${SCRIPT_DIR}/i18n-diff.build.sh"
+fi
+
+# Run container with -d flag to show diff:
+#   - Compares translation strings between base_sha and head_sha
+#   - "Removed:" = strings in base_sha but not in head_sha (translations deleted)
+#   - "Added:" = strings in head_sha but not in base_sha (new translations needed)
+#   - Full sorted lists written to /result/ref1.list and /result/ref2.list
+docker run --rm --name "$IMAGE_NAME" \
+    -v "$TMPDIR/base_sha:/base_sha:ro" \
+    -v "$TMPDIR/head_sha:/head_sha:ro" \
+    -v "$TMPDIR/result:/result" \
+    "${IMAGE_NAME}:${IMAGE_TAG}" -d

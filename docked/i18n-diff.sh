@@ -1,163 +1,204 @@
 #!/bin/bash
-#| Check translation strings.
-#| Script must be run from within git repo.
-#|
-#| Program usage:
-#|    check-strings [<sha-then>] [<sha-now>]
-#|
-#| Examples:
-#|    * Last commit checked.
-#|    $~ check-strings $(git rev-parse HEAD^) $(git rev-parse HEAD)
-#|
-#|    * Any commit checked, by revrapsing it's parent.
-#|    $~ check-strings $(git rev-parse <sha>^) <sha>
-#|
-#|    * Changes in this branch
-#|    $~ check-strings $(git rev-parse <sha>^) <sha>
-#|
-#|    * Auto-detect merge point (if no args provided on a branch)
-#|    $~ check-strings
-#|
-#| Known issues:
-#|    * If you have merged an "updated to latest from .." you will get inherited changes.
-#|    * Correct output is possible by providing most recent merge right sha as first argument like so:
-#|    * ~$ check-strings $(git log --merges -n 1 | grep -e "^Merge" | awk '{print $3}') HEAD
-#|    * See translation strings that have newlines are missed, because of egrep in last line of script. For now I think about rewriting egrep into sed or awk, because I did not find any gettext flags to do "\n| normalization .. see: https://www.gnu.org/software/gettext/manual/gettext.html
-[[ $1 == -h ]] && grep '^#|' $0 | sed 's/^#//' && exit 0
+#
+# i18n-diff: Extract translation strings from PHP files using tree-sitter
+#
+# Extracts gettext function calls with proper argument handling:
+#   _s(msgid)                -> extract arg 1
+#   _n(singular, plural, n)  -> extract args 1, 2
+#   _x(msgid, context)       -> extract arg 1
+#   _xs(msgid, context)      -> extract arg 1
+#   _xn(sing, plur, n, ctx)  -> extract args 1, 2
+#
+set -euo pipefail
 
-# Auto-detect comparison refs if not provided
-if [[ $# -eq 0 ]]; then
-    echo "Auto-detecting comparison refs..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+QUERY_FILE="${QUERY_FILE:-${SCRIPT_DIR}/i18n-php-gettext.scm}"
 
-    # Get current branch
-    current_branch=$(git rev-parse --abbrev-ref HEAD)
+REF1_DIR="${REF1_DIR:-/base_sha}"
+REF2_DIR="${REF2_DIR:-/head_sha}"
+RESULT_DIR="${RESULT_DIR:-/result}"
 
-    if [[ $current_branch == "HEAD" ]]; then
-        echo "Error: Detached HEAD state. Please provide refs manually." >&2
-        exit 1
-    fi
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
 
-    # Try to find the most recent merge commit
-    merge_commit=$(git log --merges -n 1 --format="%H" 2>/dev/null)
+Extract translation strings from PHP files and generate diff lists.
 
-    if [[ -n $merge_commit ]]; then
-        # Get the merge base (the point where branch diverged)
-        # The second parent of a merge commit is typically the merged branch
-        merge_parent=$(git log --merges -n 1 --format="%P" | awk '{print $2}')
+Options:
+    -1, --ref1 DIR     Base/old reference directory (default: /base_sha)
+    -2, --ref2 DIR     Head/new reference directory (default: /head_sha)
+    -o, --output DIR   Output directory (default: /result)
+    -q, --query FILE   Tree-sitter query file (default: translations.scm)
+    -d, --diff         Show diff between ref1 and ref2
+    -h, --help         Show this help message
 
-        if [[ -n $merge_parent ]]; then
-            echo "Found recent merge. Using merge point as comparison base."
-            then_ref=$merge_parent
-            now_ref="HEAD"
-        else
-            # Fallback: use merge-base with upstream
-            default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-            if [[ -z $default_branch ]]; then
-                default_branch="main"
-            fi
+Output files:
+    <output>/ref1.list  - Strings from ref1
+    <output>/ref2.list  - Strings from ref2
+EOF
+    exit 0
+}
 
-            merge_base=$(git merge-base HEAD origin/$default_branch 2>/dev/null)
-            if [[ -n $merge_base ]]; then
-                echo "Using merge-base with origin/$default_branch"
-                then_ref=$merge_base
-                now_ref="HEAD"
-            else
-                echo "Error: Could not auto-detect refs. Please provide them manually." >&2
-                exit 1
-            fi
-        fi
-    else
-        # No merges found, try merge-base with upstream
-        default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-        if [[ -z $default_branch ]]; then
-            # Try common default branch names
-            for branch in main master develop; do
-                if git rev-parse origin/$branch >/dev/null 2>&1; then
-                    default_branch=$branch
-                    break
-                fi
-            done
-        fi
+SHOW_DIFF=false
 
-        if [[ -n $default_branch ]]; then
-            merge_base=$(git merge-base HEAD origin/$default_branch 2>/dev/null)
-            if [[ -n $merge_base ]]; then
-                echo "Using merge-base with origin/$default_branch"
-                then_ref=$merge_base
-                now_ref="HEAD"
-            else
-                echo "Error: Could not find merge-base. Please provide refs manually." >&2
-                exit 1
-            fi
-        else
-            echo "Error: Could not detect default branch. Please provide refs manually." >&2
-            exit 1
-        fi
-    fi
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -1|--ref1) REF1_DIR="$2"; shift 2 ;;
+        -2|--ref2) REF2_DIR="$2"; shift 2 ;;
+        -o|--output) RESULT_DIR="$2"; shift 2 ;;
+        -q|--query) QUERY_FILE="$2"; shift 2 ;;
+        -d|--diff) SHOW_DIFF=true; shift ;;
+        -h|--help) usage ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
 
-    echo "Comparing: $then_ref (base) -> $now_ref (current)"
-    echo
-elif [[ $# -ne 2 ]]; then
-    grep '^#|' $0 | sed 's/^#//'
+# Verify tree-sitter is available
+if ! command -v tree-sitter &>/dev/null; then
+    echo "Error: tree-sitter CLI not found" >&2
     exit 1
-else
-    then_ref=$1
-    now_ref=$2
 fi
 
-git rev-parse $then_ref $now_ref 1> /dev/null || exit 2
+# Verify query file exists
+if [[ ! -f "$QUERY_FILE" ]]; then
+    echo "Error: Query file not found: $QUERY_FILE" >&2
+    exit 1
+fi
 
-rm -rf /tmp/_chstr
-mkdir /tmp/_chstr
+mkdir -p "$RESULT_DIR"
 
-# $1 <commit-ish>
-# $? stdout
-mk_pot() {
-    git archive $1 > /tmp/_chstr/$1.tar
-    tar -xf /tmp/_chstr/$1.tar --one-top-level=/tmp/_chstr/$1
-    cd /tmp/_chstr/$1
-    find /tmp/_chstr/$1 -type f -name "*.php" > /tmp/_chstr/$1/_phpfiles
-    xgettext \
-        --files-from=_phpfiles \
-        --output=- \
-        --keyword=_n:1,2 \
-        --keyword=_s \
-        --keyword=_x:1,2c \
-        --keyword=_xs:1,2c \
-        --keyword=_xn:1,2,4c \
-        --from-code=UTF-8 \
-        --language=php \
-        --no-wrap \
-        --sort-output \
-        --no-location \
-        --omit-header
+# Extract string content from quoted PHP string
+# Handles: 'single', "double", and concatenation "foo" . "bar"
+parse_string_value() {
+    local raw="$1"
+    # Remove leading/trailing whitespace
+    raw="${raw#"${raw%%[![:space:]]*}"}"
+    raw="${raw%"${raw##*[![:space:]]}"}"
+
+    # Handle concatenation: split on " . " or ' . ' and join
+    if [[ "$raw" == *'" . "'* ]] || [[ "$raw" == *"' . '"* ]]; then
+        local result=""
+        local IFS='.'
+        for part in $raw; do
+            part="${part#"${part%%[![:space:]]*}"}"
+            part="${part%"${part##*[![:space:]]}"}"
+            # Strip quotes
+            if [[ "$part" =~ ^\"(.*)\"$ ]]; then
+                result+="${BASH_REMATCH[1]}"
+            elif [[ "$part" =~ ^\'(.*)\'$ ]]; then
+                result+="${BASH_REMATCH[1]}"
+            fi
+        done
+        echo "$result"
+    elif [[ "$raw" =~ ^\"(.*)\"$ ]]; then
+        # Double-quoted string - handle escapes
+        local content="${BASH_REMATCH[1]}"
+        content="${content//\\\"/\"}"
+        content="${content//\\n/$'\n'}"
+        content="${content//\\t/$'\t'}"
+        echo "$content"
+    elif [[ "$raw" =~ ^\'(.*)\'$ ]]; then
+        # Single-quoted string
+        local content="${BASH_REMATCH[1]}"
+        content="${content//\\\'/\'}"
+        echo "$content"
+    else
+        # Skip variables, complex expressions
+        return 1
+    fi
 }
 
-jira_fmt() {
-    exec 8<>/tmp/_chstr/$then_ref-$now_ref-removed
-    exec 9<>/tmp/_chstr/$then_ref-$now_ref-added
+# Run tree-sitter query and extract strings
+extract_strings() {
+    local dir="$1"
+    local tmpfile
+    tmpfile=$(mktemp)
 
-    echo "Strings added:" >&9;
-    echo "Strings deleted:" >&8;
+    # Find all PHP files and run tree-sitter query
+    find "$dir" -name '*.php' -type f | while read -r phpfile; do
+        tree-sitter query "$QUERY_FILE" "$phpfile" 2>/dev/null || true
+    done > "$tmpfile"
 
-    while IFS= read line; do
-        fd=8 && [[ $line =~ ^\< ]] || fd=9
+    # Parse tree-sitter output
+    # Format: "  capture_name: `text`" or multi-line with row/col info
+    local current_func=""
+    local arg_count=0
 
-        echo "${line}" |
-        sed -r '/[<>] msgctxt/ {:a;N;s/[<>] msgctxt "(.+)"\n[<>] msgid "(.+)"/- _\2_ *context:* _\1_/g}' | \
-        sed -r 's/^(<|>) msgid(_plural){0,1} "/- _/g' | \
-        sed -r 's/"$/_/g' | \
-        sed -r 's/\\"/"/g' \
-            >&$fd
-    done
+    while IFS= read -r line; do
+        # Detect function name capture
+        if [[ "$line" =~ _fn:\ \`([^\']+)\` ]]; then
+            current_func="${BASH_REMATCH[1]}"
+            arg_count=0
+        # Detect argument captures
+        elif [[ "$line" =~ arg[12]:\ \`(.+)\`$ ]]; then
+            local arg_text="${BASH_REMATCH[1]}"
+            ((arg_count++)) || true
 
-    diff --changed-group-format="%>" --unchanged-group-format="" /dev/fd/8 /dev/fd/9
-    echo
-    diff --changed-group-format="%>" --unchanged-group-format="" /dev/fd/9 /dev/fd/8
+            # Determine if we should extract this argument
+            local should_extract=false
+            case "$current_func" in
+                _s|_x|_xs)
+                    [[ $arg_count -eq 1 ]] && should_extract=true
+                    ;;
+                _n|_xn)
+                    [[ $arg_count -le 2 ]] && should_extract=true
+                    ;;
+            esac
 
-    exec 9>&-
-    exec 8>&-
+            if $should_extract; then
+                if parsed=$(parse_string_value "$arg_text"); then
+                    echo "$parsed"
+                fi
+            fi
+        fi
+    done < "$tmpfile"
+
+    rm -f "$tmpfile"
 }
 
-diff <(mk_pot $then_ref) <(mk_pot $now_ref) | \
-    egrep '[<>] (msgid|msgctxt)' | jira_fmt
+# Process ref1 if it exists
+if [[ -d "$REF1_DIR" ]]; then
+    echo "Processing $REF1_DIR..." >&2
+    extract_strings "$REF1_DIR" | sort -u > "$RESULT_DIR/ref1.list"
+    echo "  Found $(wc -l < "$RESULT_DIR/ref1.list" | tr -d ' ') unique strings" >&2
+else
+    echo "Warning: $REF1_DIR does not exist, skipping" >&2
+    : > "$RESULT_DIR/ref1.list"
+fi
+
+# Process ref2 if it exists
+if [[ -d "$REF2_DIR" ]]; then
+    echo "Processing $REF2_DIR..." >&2
+    extract_strings "$REF2_DIR" | sort -u > "$RESULT_DIR/ref2.list"
+    echo "  Found $(wc -l < "$RESULT_DIR/ref2.list" | tr -d ' ') unique strings" >&2
+else
+    echo "Warning: $REF2_DIR does not exist, skipping" >&2
+    : > "$RESULT_DIR/ref2.list"
+fi
+
+# Show diff if requested
+if [[ "$SHOW_DIFF" == "true" ]]; then
+    echo "" >&2
+    echo "=== Diff ===" >&2
+
+    removed=$(comm -23 "$RESULT_DIR/ref1.list" "$RESULT_DIR/ref2.list")
+    if [[ -n "$removed" ]]; then
+        echo "Removed:"
+        echo "$removed" | sed 's/^/  - /'
+    fi
+
+    added=$(comm -13 "$RESULT_DIR/ref1.list" "$RESULT_DIR/ref2.list")
+    if [[ -n "$added" ]]; then
+        echo "Added:"
+        echo "$added" | sed 's/^/  + /'
+    fi
+
+    if [[ -z "$removed" && -z "$added" ]]; then
+        echo "No changes in translation strings"
+    fi
+fi
+
+echo "" >&2
+echo "Results written to:" >&2
+echo "  $RESULT_DIR/ref1.list" >&2
+echo "  $RESULT_DIR/ref2.list" >&2

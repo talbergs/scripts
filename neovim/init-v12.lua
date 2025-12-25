@@ -475,8 +475,7 @@ vim.keymap.set("n", "gH", function()
   sticky_index = 1
 end, { desc = "LSP: Clear Sticky Highlights" })
 
-
-
+-- {{{ Keymaps
 map("n", "gr", "<cmd>lua vim.lsp.buf.references()<cr>", { desc = "LSP: References" })
 map("n", "gi", "<cmd>lua vim.lsp.buf.implementation()<cr>", { desc = "LSP: Implementation" })
 map("n", "gt", "<cmd>lua vim.lsp.buf.type_definition()<cr>", { desc = "LSP: Type Definition" })
@@ -566,3 +565,4 @@ map("i", "<c-l>", "<c-g>u<esc>[s1z=`a<c-g>u", { desc = "Insert: Correct spelling
 
 -- Terminal Mode
 map("t", "<M-`>", "<C-\\><C-n>", { desc = "Terminal: Escape to Normal" })
+-- }}}
