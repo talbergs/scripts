@@ -121,4 +121,5 @@ docker run --rm --name "$IMAGE_NAME" \
     -v "$TMPDIR/base_sha:/base_sha:ro" \
     -v "$TMPDIR/head_sha:/head_sha:ro" \
     -v "$TMPDIR/result:/result" \
-    "${IMAGE_NAME}:${IMAGE_TAG}" -d
+    "${IMAGE_NAME}:${IMAGE_TAG}" \
+    --diff # script option to show regular srting diff

@@ -153,6 +153,7 @@ extract_strings() {
         fi
     done < "$tmpfile"
 
+    cp $tmpfile /result/$(basename $tmpfile)
     rm -f "$tmpfile"
 }
 

@@ -1,9 +1,3 @@
 ### Dockerized utilities.
 
-> Should be portable.
-
-```sh
-SCRIPT_NAME=i18n-diff
-docker build --tag $SCRIPT_NAME:latest --file ./$SCRIPT_NAME.sh.Dockerfile
-docker run $SCRIPT_NAME:latest
-```
+- **i18n-diff** uses tree-sitter within docker and git at host - script shows i18n changes in PR in PWD

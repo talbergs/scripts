@@ -1,15 +1,47 @@
 #!/bin/bash
 #
-# Test suite for i18n-diff-2
+# Test suite for i18n-diff
 #
-# This script creates test scenarios and validates that i18n-diff-2
-# correctly extracts and compares translation strings.
+
+IMAGE_NAME="i18n-diff"
+IMAGE_TAG="latest"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! docker image inspect "${IMAGE_NAME}:${IMAGE_TAG}" >/dev/null 2>&1
+then
+    echo "Image ${IMAGE_NAME}:${IMAGE_TAG} not found, building..." >&2
+    "${SCRIPT_DIR}/i18n-diff.build.sh"
+fi
+
+mk-case() {
+    TMPDIR=/tmp/i18n-diff-test
+    [[ -d $TMPDIR ]] && rm -rf $TMPDIR
+
+    mkdir -p $TMPDIR/result
+    mkdir -p $TMPDIR/head_sha
+    mkdir -p $TMPDIR/base_sha
+
+    cp "$1" $TMPDIR/head_sha/file.php
+    cp "$2" $TMPDIR/base_sha/file.php
+
+    docker run --rm --name "$IMAGE_NAME" \
+        -v "$TMPDIR/base_sha:/base_sha:ro" \
+        -v "$TMPDIR/head_sha:/head_sha:ro" \
+        -v "$TMPDIR/result:/result" \
+        "${IMAGE_NAME}:${IMAGE_TAG}" \
+        --diff # script option to show regular srting diff
+}
+
+mk-case \
+    <(echo '<?php _("Base");_("Base");') \
+    <(echo '<?php _("Base");_("Bose");')
+
+exit 3
+
+
 TEST_DIR="/tmp/i18n-diff-2-test-$$"
-PYTHON_SCRIPT="${SCRIPT_DIR}/i18n-diff-2.py"
 
 # Colors for output
 RED='\033[0;31m'
