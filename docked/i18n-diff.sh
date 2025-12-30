@@ -115,9 +115,9 @@ extract_strings() {
     tmpfile=$(mktemp)
 
     # Find all PHP files and run tree-sitter query
-    find "$dir" -name '*.php' -type f | while read -r phpfile; do
+    while IFS= read -r phpfile; do
         tree-sitter query "$QUERY_FILE" "$phpfile" 2>/dev/null || true
-    done > "$tmpfile"
+    done < <(find "$dir" -name '*.php' -type f) > "$tmpfile"
 
     # Parse tree-sitter output
     # Format: "  capture_name: `text`" or multi-line with row/col info
@@ -153,7 +153,6 @@ extract_strings() {
         fi
     done < "$tmpfile"
 
-    cp $tmpfile /result/$(basename $tmpfile)
     rm -f "$tmpfile"
 }
 

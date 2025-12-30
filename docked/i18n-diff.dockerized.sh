@@ -12,49 +12,54 @@
 #   ./docker-run.sh -t JIRA-456 --json
 #
 
-set -e
+set -euo pipefail
 
 IMAGE_NAME="i18n-diff"
 IMAGE_TAG="latest"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-base_sha=
-head_sha=
+base_sha=""
+head_sha=""
+head_tag=""
 git-refs() {
-    if [[ "$1" != "" ]]
-    then
+    if [[ -n "${1:-}" ]]; then
         base_sha=$(git rev-parse --short "$1")
     else
-        local head_tag=$(git log -1 --format='%s' | sed -n -e 's/.*\[\(.*\)\].*/\1/p')
+        head_tag=$(git log -1 --format='%s' | sed -n -e 's/.*\[\(.*\)\].*/\1/p')
         if [[ -z "$head_tag" ]]; then
             echo "Error: HEAD commit has no [tag] in message" >&2
             exit 1
         fi
 
+        local recent_merge_sha
         recent_merge_sha=$(git log --grep "$head_tag" --format='%h' --merges | sed 1q)
-        if [[ "$recent_merge_sha" != "" ]]
-        then
+        if [[ -n "$recent_merge_sha" ]]; then
             base_sha=$(git show "$recent_merge_sha" | sed -n -e '/Merge/p' | cut -d' ' -f 3)
         else
             base_sha=$(git log --grep "$head_tag" --format='%h' | tail -n 1)
         fi
     fi
 
-    if [[ "$2" != "" ]]
-    then
+    if [[ -n "${2:-}" ]]; then
         head_sha=$(git rev-parse --short "$2")
     else
         head_sha=$(git rev-parse --short HEAD)
     fi
 
-    echo "Using $head_tag as feature tag found in HEAD($head_sha)." >&2
+    if [[ -n "$head_tag" ]]; then
+        echo "Using $head_tag as feature tag found in HEAD($head_sha)." >&2
+    fi
     echo "${base_sha} ${head_sha}"
 }
 
 # In contrast to git rev-parse --show-toplevel, this works with git-worktree
 git-root() {
+    local git_common_dir
     git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
-    [[ "$git_common_dir" == "" ]] && echo not in git dir && exit 8
+    if [[ -z "$git_common_dir" ]]; then
+        echo "Error: not in git dir" >&2
+        exit 8
+    fi
     echo -n "$(cd "$git_common_dir/.." && pwd)"
 }
 
@@ -64,13 +69,13 @@ if [ ! -d "$(git-root)/.git" ]; then
     exit 1
 fi
 
-git-refs $@
+git-refs "$@"
 
 TMPDIR=/tmp/i18n-diff
-[[ -d $TMPDIR ]] && rm -rf $TMPDIR
-mkdir -p $TMPDIR/result
-mkdir -p $TMPDIR/head_sha
-mkdir -p $TMPDIR/base_sha
+[[ -d "$TMPDIR" ]] && rm -rf "$TMPDIR"
+mkdir -p "$TMPDIR/result"
+mkdir -p "$TMPDIR/head_sha"
+mkdir -p "$TMPDIR/base_sha"
 
 # Extract PHP files from each ref
 extract_php_files() {
@@ -122,4 +127,4 @@ docker run --rm --name "$IMAGE_NAME" \
     -v "$TMPDIR/head_sha:/head_sha:ro" \
     -v "$TMPDIR/result:/result" \
     "${IMAGE_NAME}:${IMAGE_TAG}" \
-    --diff # script option to show regular srting diff
+    --diff # script option to show regular string diff

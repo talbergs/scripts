@@ -43,7 +43,7 @@ COPY i18n-diff.sh /usr/local/bin/i18n-diff.sh
 COPY i18n-php-gettext.scm /usr/local/share/i18n-diff/i18n-php-gettext.scm
 
 # Make script executable and set query file location
-RUN chmod +x /usr/local/bin/i18n-diff
+RUN chmod +x /usr/local/bin/i18n-diff.sh
 ENV QUERY_FILE=/usr/local/share/i18n-diff/i18n-php-gettext.scm
 
 SHELL ["/bin/bash", "-c"]
