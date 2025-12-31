@@ -1,15 +1,12 @@
 #!/bin/bash
-#
 # Run i18n-diff in Docker
 #
 # Usage:
-#   ./docker-run.sh                    # Auto-detect ticket from HEAD commit
-#   ./docker-run.sh --help
-#   ./docker-run.sh HEAD~3 HEAD
-#   ./docker-run.sh release/7.4 master
-#   ./docker-run.sh --json origin/main HEAD
-#   ./docker-run.sh --ticket PROJ-123
-#   ./docker-run.sh -t JIRA-456 --json
+#   ./$0                    # Auto-detect ticket from HEAD commit
+#   ./$0 -- --help          # Args to entrypoint.sh
+#   ./$0 HEAD~3             # Implicit HEAD
+#   ./$0 HEAD~3 HEAD        # Commitish expression parsed
+#   ./$0 release/7.4 master # Refs, sha, tags.
 #
 
 set -euo pipefail
@@ -32,7 +29,7 @@ git-refs() {
         fi
 
         local recent_merge_sha
-        recent_merge_sha=$(git log --grep "$head_tag" --format='%h' --merges | sed 1q)
+        recent_merge_sha=$(git log --grep "$head_tag" --format='%h' --merges -1)
         if [[ -n "$recent_merge_sha" ]]; then
             base_sha=$(git show "$recent_merge_sha" | sed -n -e '/Merge/p' | cut -d' ' -f 3)
         else
@@ -63,6 +60,24 @@ git-root() {
     echo -n "$(cd "$git_common_dir/.." && pwd)"
 }
 
+trim-args() {
+	# @CLAUDE_TODO:
+}
+
+args="$(trim-args "$@" "--")"
+if [ -z "$args" ]
+then
+	args="--diff"
+	echo "#
+	# Running container with -d flag to show diff:
+	#   - Compares translation strings between $base_sha and $head_sha
+	#   - \"Removed:\" = strings in base_sha but not in head_sha (translations deleted)
+	#   - \"Added:\" = strings in head_sha but not in base_sha (new translations needed)
+	#   - Full sorted lists written to /result/ref1.list and /result/ref2.list
+	#   "
+fi
+
+
 if [ ! -d "$(git-root)/.git" ]; then
     echo "Error: Not in a git repository" >&2
     echo "Please run this from within a git repository" >&2
@@ -73,9 +88,9 @@ git-refs "$@"
 
 TMPDIR=/tmp/i18n-diff
 [[ -d "$TMPDIR" ]] && rm -rf "$TMPDIR"
-mkdir -p "$TMPDIR/result"
-mkdir -p "$TMPDIR/head_sha"
-mkdir -p "$TMPDIR/base_sha"
+mkdir -p "$TMPDIR/$IMAGE_NAME.result"
+mkdir -p "$TMPDIR/$IMAGE_NAME.head_sha"
+mkdir -p "$TMPDIR/$IMAGE_NAME.base_sha"
 
 # Extract PHP files from each ref
 extract_php_files() {
@@ -103,9 +118,9 @@ extract_php_files() {
 }
 
 # Extract in parallel
-extract_php_files "$base_sha" "$TMPDIR/base_sha" &
+extract_php_files "$base_sha" "$TMPDIR/$IMAGE_NAME.base_sha" &
 pid_base=$!
-extract_php_files "$head_sha" "$TMPDIR/head_sha" &
+extract_php_files "$head_sha" "$TMPDIR/$IMAGE_NAME.head_sha" &
 pid_head=$!
 
 # Wait for both extractions to complete
@@ -114,17 +129,12 @@ wait $pid_base $pid_head
 if ! docker image inspect "${IMAGE_NAME}:${IMAGE_TAG}" >/dev/null 2>&1
 then
     echo "Image ${IMAGE_NAME}:${IMAGE_TAG} not found, building..." >&2
-    "${SCRIPT_DIR}/i18n-diff.build.sh"
+    "${SCRIPT_DIR}/$IMAGE_NAME.build.sh"
 fi
 
-# Run container with -d flag to show diff:
-#   - Compares translation strings between base_sha and head_sha
-#   - "Removed:" = strings in base_sha but not in head_sha (translations deleted)
-#   - "Added:" = strings in head_sha but not in base_sha (new translations needed)
-#   - Full sorted lists written to /result/ref1.list and /result/ref2.list
 docker run --rm --name "$IMAGE_NAME" \
-    -v "$TMPDIR/base_sha:/base_sha:ro" \
-    -v "$TMPDIR/head_sha:/head_sha:ro" \
-    -v "$TMPDIR/result:/result" \
+    -v "$TMPDIR/$IMAGE_NAME.base_sha:/base_sha:ro" \
+    -v "$TMPDIR/$IMAGE_NAME.head_sha:/head_sha:ro" \
+    -v "$TMPDIR/$IMAGE_NAME.result:/result" \
     "${IMAGE_NAME}:${IMAGE_TAG}" \
-    --diff # script option to show regular string diff
+    $args # script option to show regular string diff

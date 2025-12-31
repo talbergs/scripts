@@ -253,4 +253,5 @@ abbr -a -g gr git remote
 abbr -a -g gco git checkout
 abbr -a -g glog git log --format=fuller --first-parent --abbrev-commit
 abbr -a -g rmf rm -rf
+abbr -a -g cp claude --permission-mode acceptEdits -p
 # }}}

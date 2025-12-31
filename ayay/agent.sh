@@ -53,7 +53,7 @@ check_server() {
 ensure_model() {
     log_info "Checking if model '${MODEL}' is available..."
 
-    if ollama list 2>/dev/null | grep -q "^${MODEL}"; then
+    if ollama show "${MODEL}" &>/dev/null; then
         log_success "Model '${MODEL}' is already pulled"
     else
         log_info "Pulling model '${MODEL}'... (this may take a while)"
@@ -75,24 +75,30 @@ run_prompt() {
     log_info "Running prompt against ${MODEL}..."
     echo ""
 
-    # Build the JSON payload
+    # Build the JSON payload using jq to properly escape strings
     local payload
-    payload=$(cat <<EOF
-{
-    "model": "${MODEL}",
-    "prompt": "${user_prompt}",
-    "system": "${system_prompt}",
-    "stream": false,
-    "options": {
-        "temperature": ${TEMPERATURE},
-        "top_p": ${TOP_P},
-        "top_k": ${TOP_K},
-        "num_ctx": ${NUM_CTX},
-        "repeat_penalty": ${REPEAT_PENALTY}
-    }
-}
-EOF
-)
+    payload=$(jq -n \
+        --arg model "$MODEL" \
+        --arg prompt "$user_prompt" \
+        --arg system "$system_prompt" \
+        --argjson temp "$TEMPERATURE" \
+        --argjson top_p "$TOP_P" \
+        --argjson top_k "$TOP_K" \
+        --argjson num_ctx "$NUM_CTX" \
+        --argjson repeat_penalty "$REPEAT_PENALTY" \
+        '{
+            model: $model,
+            prompt: $prompt,
+            system: $system,
+            stream: false,
+            options: {
+                temperature: $temp,
+                top_p: $top_p,
+                top_k: $top_k,
+                num_ctx: $num_ctx,
+                repeat_penalty: $repeat_penalty
+            }
+        }')
 
     # Add context if provided
     if [[ -n "$context" ]]; then
@@ -113,35 +119,40 @@ EOF
 run_chat() {
     local system_prompt="$1"
     shift
-    local messages=()
 
     # Build messages array from remaining arguments (pairs of role,content)
+    local messages_json="[]"
     while [[ $# -gt 1 ]]; do
         local role="$1"
         local content="$2"
-        messages+=("{\"role\": \"${role}\", \"content\": \"${content}\"}")
+        messages_json=$(echo "$messages_json" | jq \
+            --arg role "$role" \
+            --arg content "$content" \
+            '. + [{role: $role, content: $content}]')
         shift 2
     done
 
-    local messages_json
-    messages_json=$(printf '%s,' "${messages[@]}" | sed 's/,$//')
-
     local payload
-    payload=$(cat <<EOF
-{
-    "model": "${MODEL}",
-    "messages": [${messages_json}],
-    "stream": false,
-    "options": {
-        "temperature": ${TEMPERATURE},
-        "top_p": ${TOP_P},
-        "top_k": ${TOP_K},
-        "num_ctx": ${NUM_CTX},
-        "repeat_penalty": ${REPEAT_PENALTY}
-    }
-}
-EOF
-)
+    payload=$(jq -n \
+        --arg model "$MODEL" \
+        --argjson messages "$messages_json" \
+        --argjson temp "$TEMPERATURE" \
+        --argjson top_p "$TOP_P" \
+        --argjson top_k "$TOP_K" \
+        --argjson num_ctx "$NUM_CTX" \
+        --argjson repeat_penalty "$REPEAT_PENALTY" \
+        '{
+            model: $model,
+            messages: $messages,
+            stream: false,
+            options: {
+                temperature: $temp,
+                top_p: $top_p,
+                top_k: $top_k,
+                num_ctx: $num_ctx,
+                repeat_penalty: $repeat_penalty
+            }
+        }')
 
     local response
     response=$(curl -s "${OLLAMA_HOST}/api/chat" \
@@ -174,24 +185,6 @@ run_agent() {
 
     log_info "Running agent: ${name}"
     run_prompt "$system_prompt" "$input"
-}
-
-# Chain multiple agents
-chain_agents() {
-    local input="$1"
-    shift
-
-    local current_output="$input"
-
-    for agent_def in "$@"; do
-        current_output=$(run_agent "$agent_def" "$current_output")
-        echo ""
-        log_info "Intermediate output:"
-        echo "$current_output"
-        echo ""
-    done
-
-    echo "$current_output"
 }
 
 # Main demonstration
@@ -291,6 +284,7 @@ main() {
     local cmd="${1:-demo}"
 
     case "$cmd" in
+        nop) ;;
         demo)
             demo
             ;;

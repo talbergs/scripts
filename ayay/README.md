@@ -3,7 +3,6 @@
   - Simple prompts - run_prompt() sends a system + user prompt to the LLM
   - Chat mode - run_chat() supports multi-turn conversations with message history
   - Agent abstraction - create_agent() and run_agent() let you define named agents with specific system prompts
-  - Agent chaining - chain_agents() pipes output from one agent to the next
 
   Commands:
   | Command | Description                |
