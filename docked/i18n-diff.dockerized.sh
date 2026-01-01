@@ -89,29 +89,43 @@ lead-args() {
 
 git-refs $(lead-args "$@")
 
-# Extract PHP files from each ref
+# Extract only changed PHP files between base_sha and head_sha
 extract_php_files() {
     local ref="$1"
     local target_dir="$2"
 
-    echo "Extracting PHP files from $ref..." >&2
+    echo "Extracting changed PHP files from $ref..." >&2
 
-    # Get list of PHP files at this ref
-    local php_files
-    php_files=$(git ls-tree -r --name-only "$ref" | grep '\.php$' || true)
+    # Get list of PHP files that changed between base and head
+    local changed_files
+    changed_files=$(git diff --name-only "$base_sha" "$head_sha" -- '*.php' || true)
 
-    if [[ -z "$php_files" ]]; then
-        echo "  No PHP files found at $ref" >&2
+    if [[ -z "$changed_files" ]]; then
+        echo "  No changed PHP files between $base_sha and $head_sha" >&2
         return
     fi
 
-    # Extract only PHP files using git archive
+    # Filter to files that exist at this ref (handles added/deleted files)
+    local php_files=""
+    while IFS= read -r file; do
+        if git cat-file -e "$ref:$file" 2>/dev/null; then
+            php_files+="$file"$'\n'
+        fi
+    done <<< "$changed_files"
+    php_files=$(echo "$php_files" | sed '/^$/d')
+
+    if [[ -z "$php_files" ]]; then
+        echo "  No PHP files exist at $ref" >&2
+        return
+    fi
+
+    # Extract only changed PHP files using git archive
     # shellcheck disable=SC2086
-    git archive "$ref" $php_files | tar -xf - -C "$target_dir"
+    echo "$php_files" | xargs git archive "$ref" -- | tar -xf - -C "$target_dir"
 
     local count
     count=$(echo "$php_files" | wc -l | tr -d ' ')
-    echo "  Extracted $count PHP files" >&2
+    echo "  Extracted $count changed PHP files" >&2
 }
 
 TMPDIR="$PWD/i18n-diff.tmp"
@@ -140,16 +154,16 @@ if [ -z "$args" ]
 then
     args="-1 /base_sha -2 /head_sha"
 	echo "
-    #   - Compares translation strings between $base_sha (base_sha) and $head_sha (head_sha)
-	#   - \"Added:\" = strings in head_sha but not in base_sha (new translations needed)
-	#   - \"Removed:\" = strings in base_sha but not in head_sha (translations deleted)
-	#   - Full sorted lists written to $TMPDIR/$IMAGE_NAME.result/
-	#   "
+         - Compares translation strings between $base_sha (base_sha) and $head_sha (head_sha)
+         - \"Added:\" = strings in head_sha but not in base_sha (new translations needed)
+         - \"Removed:\" = strings in base_sha but not in head_sha (translations deleted)
+         - Full sorted lists written to $TMPDIR/$IMAGE_NAME.result/
+    " 1>&2
 fi
 
-docker run --rm --name "$IMAGE_NAME" \
+docker run -ti --rm --name "$IMAGE_NAME" \
     -v "$TMPDIR/$IMAGE_NAME.base_sha:/base_sha:ro" \
     -v "$TMPDIR/$IMAGE_NAME.head_sha:/head_sha:ro" \
     -v "$TMPDIR/$IMAGE_NAME.result:/result" \
     "${IMAGE_NAME}:${IMAGE_TAG}" \
-    $args # script option to show regular string diff
+    $args

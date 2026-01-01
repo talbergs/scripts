@@ -67,13 +67,13 @@ fi
 # Verify tree-sitter is available
 if ! command -v tree-sitter &>/dev/null; then
     echo "Error: tree-sitter CLI not found" >&2
-    exit 1
+    exit 2
 fi
 
 # Verify query file exists
 if [[ ! -f "$QUERY_FILE" ]]; then
     echo "Error: Query file not found: $QUERY_FILE" >&2
-    exit 1
+    exit 3
 fi
 # }}}
 
@@ -97,25 +97,18 @@ ref2_pid=$!
 
 wait $ref1_pid $ref2_pid
 
-diff=$(diff "$RESULT_DIR/ref1.list" "$RESULT_DIR/ref2.list")
-added=$(echo "$diff" | grep '^> ')
-removed=$(echo "$diff" | grep '^< ')
+added() {
+    diff "$RESULT_DIR/ref1.list" "$RESULT_DIR/ref2.list" | grep '^> '
+}
 
-if [[ -z "$added$removed" ]]
-then
-    echo "No string changes."
-    exit 0
-fi
+removed() {
+    diff "$RESULT_DIR/ref1.list" "$RESULT_DIR/ref2.list" | grep '^< '
+}
 
-if [[ ! -z "$added" ]]
-then
-    echo "Strings added:"
-    echo "$added" | sed "s/.*'\(.*\)'/-_\1_/"
-fi
-
-if [[ ! -z "$removed" ]]
-then
-    echo "Strings removed:"
-    echo "$removed" | sed "s/.*'\(.*\)'/-_\1_/"
-fi
+printf "..........\n\n" 1>&2
+printf "*(1)* String changes."
+printf "\nStrings added:\n"
+sed "s/.*'\(.*\)'/-_\1_/" <(added) | sort
+printf "\nStrings removed:\n"
+sed "s/.*'\(.*\)'/-_\1_/" <(removed) | sort
 # }}}
