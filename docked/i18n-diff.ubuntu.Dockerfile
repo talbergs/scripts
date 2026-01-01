@@ -7,11 +7,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cd /grammars/tree-sitter-php/php && tree-sitter generate && \
     mkdir -p /root/.config/tree-sitter && \
     echo '{"parser-directories": ["/grammars"]}' > /root/.config/tree-sitter/config.json && \
+    # Pre-compile the PHP grammar so we can remove build-essential
+    mkdir -p /root/.cache/tree-sitter/lib && \
+    cd /grammars/tree-sitter-php/php && \
+    cc -O2 -fPIC -shared -std=c11 -I src src/parser.c src/scanner.c -o /root/.cache/tree-sitter/lib/php.so && \
     apt-get purge -y git build-essential python3 && apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /root/.npm
 
-WORKDIR /workspace
 RUN mkdir -p /base_sha /head_sha /result
+WORKDIR /result
 
 COPY i18n-diff.sh /usr/local/bin/
 COPY i18n-php-gettext.scm /usr/local/share/i18n-diff/

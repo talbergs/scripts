@@ -60,37 +60,34 @@ git-root() {
     echo -n "$(cd "$git_common_dir/.." && pwd)"
 }
 
-trim-args() {
-	# @CLAUDE_TODO:
-}
-
-args="$(trim-args "$@" "--")"
-if [ -z "$args" ]
-then
-	args="--diff"
-	echo "#
-	# Running container with -d flag to show diff:
-	#   - Compares translation strings between $base_sha and $head_sha
-	#   - \"Removed:\" = strings in base_sha but not in head_sha (translations deleted)
-	#   - \"Added:\" = strings in head_sha but not in base_sha (new translations needed)
-	#   - Full sorted lists written to /result/ref1.list and /result/ref2.list
-	#   "
-fi
-
-
 if [ ! -d "$(git-root)/.git" ]; then
     echo "Error: Not in a git repository" >&2
     echo "Please run this from within a git repository" >&2
     exit 1
 fi
 
-git-refs "$@"
+trail-args() {
+	local found=false
+	for arg in "$@"; do
+		if [[ "$found" == true ]]; then
+			echo -n "$arg "
+		elif [[ "$arg" == "--" ]]; then
+			found=true
+		fi
+	done
+}
 
-TMPDIR=/tmp/i18n-diff
-[[ -d "$TMPDIR" ]] && rm -rf "$TMPDIR"
-mkdir -p "$TMPDIR/$IMAGE_NAME.result"
-mkdir -p "$TMPDIR/$IMAGE_NAME.head_sha"
-mkdir -p "$TMPDIR/$IMAGE_NAME.base_sha"
+lead-args() {
+	local count=0
+	for arg in "$@"; do
+		[[ "$arg" == "--" ]] && break
+		echo -n "$arg "
+		((count++)) || true
+		[[ $count -ge 2 ]] && break
+	done
+}
+
+git-refs $(lead-args "$@")
 
 # Extract PHP files from each ref
 extract_php_files() {
@@ -117,6 +114,12 @@ extract_php_files() {
     echo "  Extracted $count PHP files" >&2
 }
 
+TMPDIR="$PWD/i18n-diff.tmp"
+[[ -d "$TMPDIR" ]] && rm -rf "$TMPDIR"
+mkdir -p "$TMPDIR/$IMAGE_NAME.result"
+mkdir -p "$TMPDIR/$IMAGE_NAME.head_sha"
+mkdir -p "$TMPDIR/$IMAGE_NAME.base_sha"
+
 # Extract in parallel
 extract_php_files "$base_sha" "$TMPDIR/$IMAGE_NAME.base_sha" &
 pid_base=$!
@@ -130,6 +133,18 @@ if ! docker image inspect "${IMAGE_NAME}:${IMAGE_TAG}" >/dev/null 2>&1
 then
     echo "Image ${IMAGE_NAME}:${IMAGE_TAG} not found, building..." >&2
     "${SCRIPT_DIR}/$IMAGE_NAME.build.sh"
+fi
+
+args="$(trail-args "$@")"
+if [ -z "$args" ]
+then
+    args="-1 /base_sha -2 /head_sha"
+	echo "
+    #   - Compares translation strings between $base_sha (base_sha) and $head_sha (head_sha)
+	#   - \"Added:\" = strings in head_sha but not in base_sha (new translations needed)
+	#   - \"Removed:\" = strings in base_sha but not in head_sha (translations deleted)
+	#   - Full sorted lists written to $TMPDIR/$IMAGE_NAME.result/
+	#   "
 fi
 
 docker run --rm --name "$IMAGE_NAME" \

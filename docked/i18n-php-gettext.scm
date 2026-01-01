@@ -1,10 +1,19 @@
 ; Tree-sitter query for PHP translation function calls
 ; Extracts msgid strings based on function signature:
+;   _(msgid)            -> arg 1
 ;   _s(msgid)           -> arg 1
 ;   _n(singular,plural) -> args 1,2
 ;   _x(msgid,ctx)       -> arg 1
 ;   _xs(msgid,ctx)      -> arg 1
 ;   _xn(sing,plur,n,ctx)-> args 1,2
+
+; Match _(string) - extract first argument
+(function_call_expression
+  function: (name) @_fn
+  (#eq? @_fn "_")
+  arguments: (arguments
+    .
+    (argument) @arg1))
 
 ; Match _s(string) - extract first argument
 (function_call_expression
