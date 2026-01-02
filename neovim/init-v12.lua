@@ -99,7 +99,7 @@ vim.pack.add(vim.user.set_cb_packs {
         "pyright",
         "html-lsp",
         "css-lsp",
-        -- "tsserver",
+        "typescript-language-server", -- also EcmaScript ls (JS)
         "rust_analyzer",
     }
     require('mason').setup()
@@ -107,6 +107,23 @@ vim.pack.add(vim.user.set_cb_packs {
     require('mason-tool-installer').setup({
       ensure_installed = ensure_installed,
     })
+    -- Fix from https://github.com/mason-org/mason-lspconfig.nvim/issues/600
+    local lsp_path = vim.fn.stdpath("data") .. "/mason/share/mason-schemas/lsp"
+    local uv = vim.loop
+    local enabled_lsps = {}
+
+    local handle = uv.fs_scandir(lsp_path)
+    if handle then
+      while true do
+        local name, type = uv.fs_scandir_next(handle)
+        if not name then break end
+        if type == "file" and name:match("%.json$") then
+          local lsp_name = name:gsub("%.json$", "")
+          table.insert(enabled_lsps, lsp_name)
+        end
+      end
+    end
+    vim.lsp.enable(enabled_lsps)
   end,
   -- }}}
   -- {{{ LLM/AI Plugins
