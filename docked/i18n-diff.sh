@@ -108,7 +108,7 @@ removed() {
 printf "..........\n\n" 1>&2
 printf "*(1)* String changes."
 printf "\nStrings added:\n"
-sed "s/.*'\(.*\)'/-_\1_/" <(added) | sort
+sed "s/.*'\(.*\)'/- _\1_/" <(added) | sort
 printf "\nStrings removed:\n"
-sed "s/.*'\(.*\)'/-_\1_/" <(removed) | sort
+sed "s/.*'\(.*\)'/- _\1_/" <(removed) | sort
 # }}}
