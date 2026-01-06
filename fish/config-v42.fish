@@ -63,6 +63,10 @@ end
 set -g __cmd_start_time 0
 set -g __cmd_start_date ""
 
+function fibbonacci
+    # TODO
+end
+
 function fish_preexec --on-event fish_preexec
     set -g __cmd_start_time (date +%s)
     set -g __cmd_start_date (date "+%H:%M:%S")

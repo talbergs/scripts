@@ -130,6 +130,22 @@ vim.pack.add(vim.user.set_cb_packs {
   "https://github.com/David-Kunz/gen.nvim",
   "https://github.com/Kurama622/llm.nvim",
   "https://github.com/gutsavgupta/nvim-gemini-companion",
+  function()
+    -- Local Ollama ghost-text completions (uses ayay/agent.sh)
+    local ghost = dofile(vim.fn.getenv("SCRIPTS_DIR") .. "/neovim/ollama-ghost.lua")
+    ghost.setup({
+      model = "deepseek-coder:6.7b",
+      trigger_on_insert = false,
+    })
+
+    -- TODO Agent: scans buffer for TODOs, invokes agent.sh for suggestions
+    local todo_agent = dofile(vim.fn.getenv("SCRIPTS_DIR") .. "/neovim/todo-agent.lua")
+    todo_agent.setup({
+      scan_interval_ms = 5000,
+      context_lines = 15,
+      debug = false,
+    })
+  end,
   -- }}}
   -- {{{ UX & statusline
   "https://github.com/norcalli/nvim-colorizer.lua", -- :ColorizerToggle<cr> Color highlighter

@@ -14,3 +14,4 @@ prompt() {
 }
 
 log_info "===  ==="
+# @CLAUDE_TODO using the available api (functions) in *.sh files here, strategize and deliver a dynamic and observable system that spawns and chains agent prompts with dynamic contexts and dynamic prompts in order to achieve code quality measures.

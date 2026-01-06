@@ -1,0 +1,7 @@
+# JIRA Tickets to sync comments from
+# Add one ticket ID per line
+# Lines starting with # are ignored
+
+# Example:
+# PROJ-123
+# PROJ-456
