@@ -16,6 +16,7 @@ M.config = {
     error = "✗",
   },
   debug = false,
+  enabled = false, -- disabled by default
 }
 
 -- Persistent cache for TODO responses
@@ -240,6 +241,10 @@ end
 
 -- Scan buffer for TODOs
 local function scan_buffer(bufnr)
+  if not M.config.enabled then
+    return
+  end
+
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
@@ -492,7 +497,7 @@ function M.setup(opts)
     group = group,
     callback = function()
       local bufnr = vim.api.nvim_get_current_buf()
-      if vim.bo[bufnr].buftype == "" then
+      if vim.bo[bufnr].buftype == "" and M.config.enabled then
         start_scan_timer()
       end
     end,
@@ -506,8 +511,18 @@ function M.setup(opts)
     end,
   })
 
-  -- Initial scan
-  start_scan_timer()
+  -- Enable/Disable commands
+  vim.api.nvim_create_user_command("TodoAgentEnable", function()
+    M.config.enabled = true
+    start_scan_timer()
+    vim.notify("[TodoAgent] Enabled", vim.log.levels.INFO)
+  end, { desc = "Enable TodoAgent" })
+
+  vim.api.nvim_create_user_command("TodoAgentDisable", function()
+    M.config.enabled = false
+    M.stop()
+    vim.notify("[TodoAgent] Disabled", vim.log.levels.INFO)
+  end, { desc = "Disable TodoAgent" })
 
   dbg("TodoAgent setup complete")
 end

@@ -1,0 +1,15 @@
+#!/usr/bin/env fish
+# Quick entry point: generate missing completions via Ollama
+# Source this or add to config.fish
+
+source (dirname (status -f))/completions-generator.fish
+source (dirname (status -f))/parallel-inference.fish
+
+# Quick alias
+alias gen-completions='fish_generate_completions'
+
+# Example usage:
+# gen-completions phase1    (fast, creates stubs with spinner)
+# gen-completions phase2    (slower, uses ollama inference)
+# gen-completions install   (copies to ~/.config/fish/completions)
+# gen-completions all       (does all three)

@@ -30,6 +30,7 @@ then
         --enable-proxy --with-ares --enable-ipv6 --with-libcurl --with-unixodbc --with-libxml2 --with-openssl --with-libpcre2 --with-ssh --with-ldap --with-net-snmp=/opt/homebrew/opt/net-snmp/bin/net-snmp-config
     make -j12 -s install
 else
-    ./configure --prefix $PWD/result --with-postgresql --enable-agent --enable-agent2 --enable-server
+    ./configure --prefix $PWD/result --with-postgresql --enable-agent --enable-agent2 --enable-server --with-libpcre2
     make install
 fi
+

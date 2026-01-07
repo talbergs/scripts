@@ -1,0 +1,1203 @@
+#!/usr/bin/env node
+/**
+ * JIRA System
+ *
+ * Ingests ticket data from JIRA, extracts subissues, and maintains local cache.
+ *
+ * Usage:
+ *   jira-system --ingest [options]
+ *   jira-system --extract-subissues
+ *   jira-system --daemon
+ *   jira-system --reset-daemon
+ *
+ * Environment variables required:
+ *   JIRA_PAT      - Your JIRA Personal Access Token (see https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html)
+ *
+ * Environment variables optional:
+ *   JIRA_BASE_URL - Your JIRA instance URL
+ */
+
+const https = require('https');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { execSync } = require('child_process');
+const readline = require('readline');
+
+// Paths
+const CONFIG_DIR = path.join(os.homedir(), '.config', 'jira-system');
+const CACHE_DIR = path.join(os.homedir(), '.cache', 'jira-system');
+const TICKETS_FILE = path.join(CONFIG_DIR, 'tickets.tsv');
+const INGESTION_OUTPUT = path.join(CACHE_DIR, 'ingestion.tickets.json');
+const SUBISSUES_OUTPUT = path.join(CACHE_DIR, 'ingestion.tickets.subissues.json');
+
+// Output file format documentation (included in output file header)
+const SUBISSUES_FORMAT_DOCUMENTATION = {
+  _format_version: "1.0",
+  _format_description: "JIRA Tickets Subissues Extraction",
+  _format_schema: {
+    metadata: {
+      description: "Extraction metadata",
+      fields: {
+        last_extraction: "ISO 8601 timestamp of last extraction",
+        source_file: "Path to ingestion tickets input file",
+        total_subissues: "Number of subissues extracted"
+      }
+    },
+    subissues: {
+      description: "Array of subissue objects",
+      fields: {
+        ticket_key: "Parent JIRA ticket key (e.g., PROJ-123)",
+        subissue_number: "Subissue number from comment (e.g., 36)",
+        opener: "Display name of comment author who created the subissue",
+        opener_email: "Email of comment author",
+        status: "Current status: OPEN, CLOSED, REOPENED, RESOLVED, or MOVED",
+        created: "ISO 8601 timestamp when subissue comment was created",
+        updated: "ISO 8601 timestamp when subissue comment was last updated",
+        comment_id: "JIRA comment ID",
+        body: "Full comment text content",
+        status_history: {
+          description: "Array of status change records",
+          fields: {
+            status: "Status at this point in time",
+            timestamp: "ISO 8601 timestamp of status detection",
+            body_snapshot: "Comment body at time of status detection"
+          }
+        }
+      }
+    }
+  }
+};
+
+const FORMAT_DOCUMENTATION = {
+  _format_version: "1.0",
+  _format_description: "JIRA Tickets Ingestion",
+  _format_schema: {
+    metadata: {
+      description: "Ingestion metadata",
+      fields: {
+        last_sync: "ISO 8601 timestamp of last sync",
+        tickets_file: "Path to tickets input file",
+        jira_base_url: "JIRA instance URL used",
+        total_tickets: "Number of tickets processed",
+        total_comments: "Total comments collected"
+      }
+    },
+    tickets: {
+      description: "Object keyed by ticket ID",
+      fields: {
+        key: "JIRA ticket key (e.g., PROJ-123)",
+        summary: "Ticket summary/title",
+        status: "Current ticket status",
+        url: "Direct link to ticket",
+        comments: {
+          description: "Array of comment objects",
+          fields: {
+            id: "Unique comment ID",
+            author: "Display name of comment author",
+            author_email: "Email of comment author",
+            created: "ISO 8601 timestamp when comment was created",
+            updated: "ISO 8601 timestamp when comment was last updated",
+            body: "Comment text content"
+          }
+        },
+        last_fetched: "ISO 8601 timestamp when this ticket was last fetched"
+      }
+    }
+  }
+};
+
+function parseArgs(args) {
+  const options = {
+    ingest: false,
+    extractSubissues: false,
+    addSubissue: false,
+    addSubissueArgs: [],
+    listTickets: false,
+    daemon: false,
+    resetDaemon: false,
+    checkAuth: false,
+    debug: false,
+    help: false
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--help' || arg === '-h') {
+      options.help = true;
+    } else if (arg === '--debug' || arg === '-d') {
+      options.debug = true;
+    } else if (arg === '--check-auth') {
+      options.checkAuth = true;
+    } else if (arg === '--list-tickets') {
+      options.listTickets = true;
+    } else if (arg === '--ingest') {
+      options.ingest = true;
+    } else if (arg === '--extract-subissues') {
+      options.extractSubissues = true;
+    } else if (arg === '--add-subissue') {
+      options.addSubissue = true;
+      // Collect remaining args (excluding debug flags)
+      options.addSubissueArgs = args.slice(i + 1).filter(a => a !== '--debug' && a !== '-d');
+      break;
+    } else if (arg === '--daemon') {
+      options.daemon = true;
+    } else if (arg === '--reset-daemon') {
+      options.resetDaemon = true;
+    }
+  }
+
+  return options;
+}
+
+function showHelp() {
+  const helpText = `
+JIRA System - Ingest and manage JIRA ticket data
+
+Usage:
+  jira-system --check-auth [options]
+  jira-system --list-tickets [options]
+  jira-system --ingest [options]
+  jira-system --extract-subissues [options]
+  jira-system --add-subissue [TICKET] [DESCRIPTION]
+  jira-system --daemon
+  jira-system --reset-daemon
+
+Commands:
+  --check-auth         Verify JIRA API access and authentication
+  --list-tickets       List configured tickets with titles and status
+  --ingest             Sync tickets from JIRA
+  --extract-subissues  Extract subissues from ingested tickets
+  --add-subissue       Create a new subissue on a ticket
+  --daemon             Start coordination daemon (not yet implemented)
+  --reset-daemon       Reset daemon state (not yet implemented)
+
+--list-tickets [options]:
+  Lists configured tickets from ${TICKETS_FILE} with their cached titles and status.
+  - Reads from local ingestion cache (run --ingest first to populate)
+  - Displays ticket key, title, status, and last sync time
+  - Shows tickets from the configured tickets file only
+  
+  Examples:
+    jira-system --list-tickets                # show all configured tickets
+    jira-system --list-tickets --debug        # include extra details
+
+--add-subissue [TICKET] [DESCRIPTION]:
+  Creates a new subissue comment on a JIRA ticket.
+  - TICKET defaults to ticket key extracted from git branch name
+    (e.g., branch "feature/PROJ-123-fix" infers PROJ-123)
+  - Automatically fetches latest ticket state and determines next subissue number
+  - Comment visibility set to "Developers" group by default
+  - Posts to JIRA API and creates local file for daemon sync
+  - Interactive prompts if arguments are missing
+
+  Examples:
+    jira-system --add-subissue PROJ-123 "Fix the login bug"
+    jira-system --add-subissue "Fix the login bug"  # infer ticket from branch
+    jira-system --add-subissue                      # fully interactive
+    jira-system --add-subissue PROJ-123 "Fix bug" --debug  # show detailed steps
+
+Options:
+  --debug, -d          Enable verbose debug mode (show env, URLs, response details)
+  --help, -h           Show this help message
+
+Environment Variables:
+  JIRA_PAT             Your JIRA Personal Access Token (required)
+  JIRA_BASE_URL        Your JIRA instance URL (optional, default: https://support.zabbix.com)
+
+Tickets File (${TICKETS_FILE}):
+  TSV format with ticket ID in first column.
+  Empty lines and lines starting with # are ignored.
+  Example:
+    PROJ-123
+    PROJ-456
+    # This is a comment
+
+Output:
+  --ingest writes to:           ${INGESTION_OUTPUT}
+  --extract-subissues writes to: ${SUBISSUES_OUTPUT}
+
+Composability:
+  Output files use versioned JSON schemas (_format_version, _format_schema).
+  Each command reads from and writes to specific files, enabling pipelines.
+`;
+  console.log(helpText);
+}
+
+function validateEnv() {
+  if (!process.env.JIRA_PAT) {
+    console.error('Error: Missing required environment variable: JIRA_PAT');
+    console.error('\nSet this variable or use --help for more info.');
+    process.exit(1);
+  }
+}
+
+async function runCheckAuth(options) {
+  validateEnv();
+
+  const baseUrl = (process.env.JIRA_BASE_URL || 'https://support.zabbix.com').replace(/\/$/, '');
+  const token = process.env.JIRA_PAT;
+
+  console.log('JIRA Authentication Check');
+  console.log('='.repeat(50));
+  console.log('');
+
+  if (options.debug) {
+    console.log('[DEBUG] Configuration:');
+    console.log(`  JIRA_BASE_URL: ${baseUrl}`);
+    console.log(`  JIRA_PAT: ${token ? token.substring(0, 8) + '...' + token.substring(token.length - 4) : '(not set)'}`);
+    console.log(`  Token length: ${token ? token.length : 0} chars`);
+    console.log('');
+  }
+
+  // Test 1: API connectivity (try /myself first, fall back to checking actual access)
+  console.log('1. Testing API connectivity...');
+  let authVerified = false;
+  
+  try {
+    const selfUrl = `${baseUrl}/rest/api/2/myself`;
+    if (options.debug) {
+      console.log(`   [DEBUG] GET ${selfUrl}`);
+    }
+    const response = await makeRequest(selfUrl, token, { debug: options.debug });
+    
+    if (response && (response.displayName || response.name)) {
+      console.log(`   ✓ Connected to JIRA API`);
+      console.log(`   ✓ Authenticated as: ${response.displayName || response.name}`);
+      if (response.emailAddress) {
+        console.log(`   ✓ Email: ${response.emailAddress}`);
+      }
+      authVerified = true;
+    }
+  } catch (err) {
+    if (options.debug) {
+      console.log(`   [DEBUG] /myself endpoint failed (may not be available on self-hosted instance): ${err.message}`);
+    }
+    // Don't exit, will verify auth by checking actual ticket access below
+  }
+  
+  if (authVerified) {
+    console.log('');
+  } else {
+    console.log('   ℹ /myself endpoint not available, will verify via ticket access...');
+    console.log('');
+  }
+
+  // Test 2: List tickets from config
+  if (!fs.existsSync(TICKETS_FILE)) {
+    console.log('2. Tickets file check');
+    console.log(`   ⚠ No tickets file found at: ${TICKETS_FILE}`);
+    console.log('');
+  } else {
+    console.log('2. Reading configured tickets...');
+    try {
+      const content = fs.readFileSync(TICKETS_FILE, 'utf8');
+      const tickets = content
+        .split('\n')
+        .map(line => line.split('\t')[0].trim())
+        .filter(line => line && !line.startsWith('#'));
+      
+      console.log(`   ✓ Found ${tickets.length} ticket(s)`);
+      if (options.debug) {
+        console.log(`   [DEBUG] Tickets: ${tickets.join(', ')}`);
+      }
+      console.log('');
+    } catch (err) {
+      console.error(`   ✗ FAILED to read tickets file: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
+  // Test 3: Try fetching a sample ticket
+  if (fs.existsSync(TICKETS_FILE)) {
+    console.log('3. Testing ticket fetch...');
+    try {
+      const content = fs.readFileSync(TICKETS_FILE, 'utf8');
+      const tickets = content
+        .split('\n')
+        .map(line => line.split('\t')[0].trim())
+        .filter(line => line && !line.startsWith('#'));
+
+      if (tickets.length > 0) {
+        const sampleTicket = tickets[0];
+        if (options.debug) {
+          console.log(`   [DEBUG] Fetching sample ticket: ${sampleTicket}`);
+        }
+
+        const ticketUrl = `${baseUrl}/rest/api/2/issue/${sampleTicket}?fields=summary,status`;
+        console.log(`   Fetching: ${sampleTicket}...`);
+        const ticketData = await makeRequest(ticketUrl, token, { debug: options.debug });
+
+        if (ticketData && ticketData.key) {
+          console.log(`   ✓ Successfully fetched ticket`);
+          console.log(`     Key: ${ticketData.key}`);
+          console.log(`     Summary: ${ticketData.fields?.summary || '(no summary)'}`);
+          console.log(`     Status: ${ticketData.fields?.status?.name || 'Unknown'}`);
+          console.log('');
+        } else if (ticketData?.errorMessages) {
+          console.error(`   ✗ JIRA API error: ${ticketData.errorMessages.join('; ')}`);
+          process.exit(1);
+        } else {
+          console.error(`   ✗ FAILED to fetch ticket (HTTP 404 or not accessible)`);
+          process.exit(1);
+        }
+      }
+    } catch (err) {
+      console.error(`   ✗ FAILED: ${err.message}`);
+      if (options.debug) {
+        console.error(`   [DEBUG] Full error: ${err}`);
+      }
+      process.exit(1);
+    }
+  }
+
+  console.log('='.repeat(50));
+  console.log('✓ All checks passed! JIRA system is ready to use.');
+  console.log('');
+  console.log('Next steps:');
+  console.log('  jira-system --ingest              # Fetch tickets from JIRA');
+  console.log('  jira-system --extract-subissues   # Extract subissues from comments');
+}
+
+async function runListTickets(options) {
+  // Read configured ticket keys from tickets file
+  const ticketKeys = ensureTicketsFile();
+
+  if (options.debug) {
+    console.log('[DEBUG] List Tickets:');
+    console.log(`  Tickets file: ${TICKETS_FILE}`);
+    console.log(`  Cache file: ${INGESTION_OUTPUT}`);
+    console.log(`  Configured tickets: ${ticketKeys.length}`);
+    console.log('');
+  }
+
+  // Try to load cached ingestion data
+  let ingestionData = null;
+  if (fs.existsSync(INGESTION_OUTPUT)) {
+    try {
+      ingestionData = JSON.parse(fs.readFileSync(INGESTION_OUTPUT, 'utf8'));
+      if (options.debug) {
+        console.log(`[DEBUG] Loaded cache: ${Object.keys(ingestionData.tickets || {}).length} tickets cached`);
+        console.log('');
+      }
+    } catch (err) {
+      console.warn('Warning: Could not parse cached ingestion data.');
+      ingestionData = null;
+    }
+  }
+
+  if (!ingestionData) {
+    console.error('Error: No cached ticket data found.');
+    console.error(`Run 'jira-system --ingest' first to fetch tickets from JIRA.`);
+    process.exit(1);
+  }
+
+  const tickets = ingestionData.tickets || {};
+  if (Object.keys(tickets).length === 0) {
+    console.error('Error: No tickets in cache.');
+    console.error(`Run 'jira-system --ingest' to populate the cache.`);
+    process.exit(1);
+  }
+
+  // Display tickets matching configured list
+  console.log('Configured Tickets');
+  console.log('='.repeat(80));
+
+  const configuredTickets = ticketKeys
+    .map(key => ({ key, data: tickets[key] }))
+    .filter(({ data }) => data); // Only show tickets that are cached
+
+  if (configuredTickets.length === 0) {
+    console.log('No cached tickets found. Run: jira-system --ingest');
+    process.exit(0);
+  }
+
+  // Calculate column widths
+  let maxKeyLen = 'Ticket'.length;
+  let maxTitleLen = 'Title'.length;
+  let maxStatusLen = 'Status'.length;
+
+  configuredTickets.forEach(({ key, data }) => {
+    maxKeyLen = Math.max(maxKeyLen, key.length);
+    maxTitleLen = Math.max(maxTitleLen, (data.summary || '').length);
+    maxStatusLen = Math.max(maxStatusLen, (data.status || '').length);
+  });
+
+  // Limit column widths for readability
+  maxTitleLen = Math.min(maxTitleLen, 50);
+  maxStatusLen = Math.min(maxStatusLen, 20);
+
+  // Print header
+  const headerTicket = 'Ticket'.padEnd(maxKeyLen + 2);
+  const headerTitle = 'Title'.padEnd(maxTitleLen + 2);
+  const headerStatus = 'Status'.padEnd(maxStatusLen + 2);
+  const headerFetched = 'Last Synced';
+
+  console.log(`${headerTicket}${headerTitle}${headerStatus}${headerFetched}`);
+  console.log('-'.repeat(80));
+
+  // Print tickets
+  configuredTickets.forEach(({ key, data }) => {
+    const ticket = key.padEnd(maxKeyLen + 2);
+    const title = (data.summary || 'N/A').substring(0, 50).padEnd(maxTitleLen + 2);
+    const status = (data.status || 'Unknown').padEnd(maxStatusLen + 2);
+    
+    let fetchedTime = 'Never';
+    if (data.last_fetched) {
+      const date = new Date(data.last_fetched);
+      fetchedTime = date.toLocaleString();
+    }
+
+    console.log(`${ticket}${title}${status}${fetchedTime}`);
+
+    if (options.debug) {
+      console.log(`  [DEBUG] URL: ${data.url || 'N/A'}`);
+      console.log(`  [DEBUG] Comments: ${(data.comments || []).length}`);
+    }
+  });
+
+  console.log('');
+  console.log(`Total: ${configuredTickets.length} ticket(s)`);
+
+  // Show uncached tickets
+  const uncachedTickets = ticketKeys.filter(key => !tickets[key]);
+  if (uncachedTickets.length > 0) {
+    console.log(`\nUncached: ${uncachedTickets.length} ticket(s): ${uncachedTickets.join(', ')}`);
+    console.log('Run: jira-system --ingest');
+  }
+}
+
+function promptUser(question) {
+  return new Promise(resolve => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    rl.question(question, answer => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+function getTicketFromGitBranch() {
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    // Match patterns like PROJ-123, ABC-1, ZBXNEXT-9731
+    const match = branch.match(/([A-Z][A-Z0-9]*-\d+)/i);
+    return match ? match[1].toUpperCase() : null;
+  } catch {
+    return null; // Not in a git repo or git not available
+  }
+}
+
+function getNextSubissueNumber(ticketKey) {
+  if (!fs.existsSync(SUBISSUES_OUTPUT)) return 1;
+
+  try {
+    const data = JSON.parse(fs.readFileSync(SUBISSUES_OUTPUT, 'utf8'));
+    const ticketSubissues = (data.subissues || []).filter(s => s.ticket_key === ticketKey);
+
+    if (ticketSubissues.length === 0) return 1;
+    return Math.max(...ticketSubissues.map(s => s.subissue_number)) + 1;
+  } catch {
+    return 1;
+  }
+}
+
+function createSubissueFile(ticketKey, number, content) {
+  const dir = path.join(CACHE_DIR, 'edit.subissue', ticketKey);
+  fs.mkdirSync(dir, { recursive: true });
+
+  const filePath = path.join(dir, `${number}.txt`);
+  fs.writeFileSync(filePath, content, 'utf8');
+  return filePath;
+}
+
+function ensureTicketsFile() {
+  // Ensure config directory exists
+  if (!fs.existsSync(CONFIG_DIR)) {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  }
+
+  // Create tickets file with DEMO-123 if not exists
+  if (!fs.existsSync(TICKETS_FILE)) {
+    fs.writeFileSync(TICKETS_FILE, 'DEMO-123\n');
+    console.log(`Created tickets file: ${TICKETS_FILE}`);
+    console.log('Add your ticket IDs to this file (one per line, TSV format).');
+    process.exit(1);
+  }
+
+  const content = fs.readFileSync(TICKETS_FILE, 'utf8');
+  const tickets = content
+    .split('\n')
+    .map(line => line.split('\t')[0].trim())  // TSV: first column is ticket ID
+    .filter(line => line && !line.startsWith('#'));
+
+  // Check for DEMO-123 placeholder
+  if (tickets.length === 1 && tickets[0] === 'DEMO-123') {
+    console.error(`Error: Tickets file contains only placeholder DEMO-123`);
+    console.error(`Add your ticket IDs to: ${TICKETS_FILE}`);
+    process.exit(1);
+  }
+
+  // Check for empty file
+  if (tickets.length === 0) {
+    console.error(`Error: No ticket IDs found in: ${TICKETS_FILE}`);
+    console.error('Add ticket IDs (one per line, TSV format).');
+    process.exit(1);
+  }
+
+  return tickets;
+}
+
+function loadExistingData(outputFile) {
+  if (fs.existsSync(outputFile)) {
+    try {
+      const content = fs.readFileSync(outputFile, 'utf8');
+      return JSON.parse(content);
+    } catch (err) {
+      console.warn(`Warning: Could not parse existing output file, starting fresh.`);
+    }
+  }
+  return null;
+}
+
+function makeRequest(url, token, options = {}) {
+  const { method = 'GET', body = null, debug = false } = options;
+
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const reqOptions = {
+      hostname: urlObj.hostname,
+      port: 443,
+      path: urlObj.pathname + urlObj.search,
+      method,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    };
+
+    if (debug) {
+      console.log(`\n  [DEBUG] Request: ${method} ${url}`);
+    }
+
+    const req = https.request(reqOptions, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (debug) {
+          console.log(`  [DEBUG] Response: HTTP ${res.statusCode}`);
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            console.log(`  [DEBUG] Redirect to: ${res.headers.location}`);
+          }
+          if (res.statusCode !== 200 && res.statusCode !== 201) {
+            console.log(`  [DEBUG] Body: ${data.substring(0, 500)}`);
+          }
+        }
+        if (res.statusCode === 200 || res.statusCode === 201) {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            reject(new Error(`Failed to parse response: ${e.message}`));
+          }
+        } else if (res.statusCode === 404) {
+          resolve(null);
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+
+    if (body) {
+      req.write(body);
+    }
+    req.end();
+  });
+}
+
+async function fetchTicketWithComments(ticketKey, baseUrl, token, debug = false) {
+  const ticketUrl = `${baseUrl}/rest/api/2/issue/${ticketKey}?fields=summary,status`;
+  const commentsUrl = `${baseUrl}/rest/api/2/issue/${ticketKey}/comment?maxResults=1000`;
+
+  try {
+    const [ticketData, commentsData] = await Promise.all([
+      makeRequest(ticketUrl, token, { debug }),
+      makeRequest(commentsUrl, token, { debug })
+    ]);
+
+    if (!ticketData) {
+      return { error: 'Ticket not found or not accessible' };
+    }
+
+    const comments = (commentsData?.comments || []).map(comment => ({
+      id: comment.id,
+      author: comment.author?.displayName || 'Unknown',
+      author_email: comment.author?.emailAddress || null,
+      created: comment.created,
+      updated: comment.updated,
+      body: extractTextFromADF(comment.body)
+    }));
+
+    return {
+      key: ticketData.key,
+      summary: ticketData.fields?.summary || '',
+      status: ticketData.fields?.status?.name || 'Unknown',
+      url: `${baseUrl}/browse/${ticketData.key}`,
+      comments,
+      last_fetched: new Date().toISOString()
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+// Extract plain text from Atlassian Document Format (ADF)
+function extractTextFromADF(adf) {
+  if (!adf) return '';
+  if (typeof adf === 'string') return adf;
+
+  function extractFromNode(node) {
+    if (!node) return '';
+    if (node.type === 'text') return node.text || '';
+    if (node.content && Array.isArray(node.content)) {
+      return node.content.map(extractFromNode).join('');
+    }
+    return '';
+  }
+
+  const text = extractFromNode(adf);
+  return text.trim();
+}
+
+async function runIngest(options) {
+  validateEnv();
+
+  const baseUrl = (process.env.JIRA_BASE_URL || 'https://support.zabbix.com').replace(/\/$/, '');
+  const token = process.env.JIRA_PAT;
+
+  if (options.debug) {
+    console.log('[DEBUG] Ingest Configuration:');
+    console.log(`  JIRA_BASE_URL: ${baseUrl}`);
+    console.log(`  JIRA_PAT: ${token ? token.substring(0, 8) + '...' + token.substring(token.length - 4) : '(not set)'}`);
+    console.log(`  Token length: ${token ? token.length : 0} chars`);
+    console.log(`  Tickets file: ${TICKETS_FILE}`);
+    console.log(`  Output file: ${INGESTION_OUTPUT}`);
+    console.log(`  Config dir: ${CONFIG_DIR}`);
+    console.log(`  Cache dir: ${CACHE_DIR}`);
+    console.log('');
+  }
+
+  const ticketKeys = ensureTicketsFile();
+
+  console.log(`Ingesting ${ticketKeys.length} ticket(s) from JIRA...`);
+  if (options.debug) {
+    console.log(`[DEBUG] Ticket keys: ${ticketKeys.join(', ')}`);
+    console.log('');
+  }
+
+  const existingData = loadExistingData(INGESTION_OUTPUT);
+  if (options.debug) {
+    console.log(`[DEBUG] Existing data: ${existingData ? `${Object.keys(existingData.tickets || {}).length} tickets cached` : 'none'}`);
+    console.log('');
+  }
+  const tickets = existingData?.tickets || {};
+
+  let successCount = 0;
+  let errorCount = 0;
+  let totalComments = 0;
+
+  for (const ticketKey of ticketKeys) {
+    process.stdout.write(`  ${ticketKey}... `);
+
+    const result = await fetchTicketWithComments(ticketKey, baseUrl, token, options.debug);
+
+    if (result.error) {
+      console.log(`ERROR: ${result.error}`);
+      if (options.debug) {
+        console.log(`    [DEBUG] Error details: ${JSON.stringify(result.error, null, 2)}`);
+      }
+      errorCount++;
+      // Keep existing data if we have it
+      if (tickets[ticketKey]) {
+        tickets[ticketKey].sync_error = result.error;
+      }
+    } else {
+      console.log(`OK (${result.comments.length} comments)`);
+      if (options.debug) {
+        console.log(`    [DEBUG] Ticket: ${result.key}`);
+        console.log(`    [DEBUG] Status: ${result.status}`);
+        console.log(`    [DEBUG] Summary: ${result.summary}`);
+        console.log(`    [DEBUG] Comments: ${result.comments.length}`);
+        if (result.comments.length > 0) {
+          console.log(`    [DEBUG] First comment by: ${result.comments[0].author}`);
+        }
+      }
+      tickets[ticketKey] = result;
+      successCount++;
+      totalComments += result.comments.length;
+    }
+  }
+
+  const output = {
+    ...FORMAT_DOCUMENTATION,
+    metadata: {
+      last_sync: new Date().toISOString(),
+      tickets_file: TICKETS_FILE,
+      jira_base_url: baseUrl,
+      total_tickets: successCount,
+      total_comments: totalComments
+    },
+    tickets
+  };
+
+  // Ensure output directory exists
+  if (!fs.existsSync(CACHE_DIR)) {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+  }
+
+  fs.writeFileSync(INGESTION_OUTPUT, JSON.stringify(output, null, 2));
+
+  console.log(`\nIngestion complete:`);
+  console.log(`  ${successCount} ticket(s) synced`);
+  if (errorCount > 0) {
+    console.log(`  ${errorCount} error(s)`);
+  }
+  console.log(`  ${totalComments} total comments`);
+  console.log(`  Output: ${INGESTION_OUTPUT}`);
+}
+
+// Subissue detection patterns:
+// (2), *(77)*, (*21*), (3) etc. - number in parens at start of comment
+const SUBISSUE_PATTERN = /^\s*\*?\(?(\*?)(\d+)\1\)?\*?\s*[.):]/;
+
+// Status keywords - last occurrence in body determines current status
+const STATUS_KEYWORDS = ['OPEN', 'CLOSED', 'REOPENED', 'RESOLVED', 'MOVED'];
+
+function detectSubissueNumber(body) {
+  const match = body.match(SUBISSUE_PATTERN);
+  return match ? parseInt(match[2], 10) : null;
+}
+
+function detectStatus(body) {
+  let lastStatus = 'OPEN';
+  let lastIndex = -1;
+
+  for (const status of STATUS_KEYWORDS) {
+    const regex = new RegExp(`\\b${status}\\b`, 'g');
+    let match;
+    while ((match = regex.exec(body)) !== null) {
+      if (match.index > lastIndex) {
+        lastIndex = match.index;
+        lastStatus = status;
+      }
+    }
+  }
+
+  return lastStatus;
+}
+
+function loadExistingSubissues() {
+  if (fs.existsSync(SUBISSUES_OUTPUT)) {
+    try {
+      const content = fs.readFileSync(SUBISSUES_OUTPUT, 'utf8');
+      const data = JSON.parse(content);
+      // Build lookup map by ticket_key + subissue_number
+      const map = new Map();
+      for (const subissue of (data.subissues || [])) {
+        const key = `${subissue.ticket_key}:${subissue.subissue_number}`;
+        map.set(key, subissue);
+      }
+      return map;
+    } catch (err) {
+      console.warn('Warning: Could not parse existing subissues file, starting fresh.');
+    }
+  }
+  return new Map();
+}
+
+async function runExtractSubissues(options) {
+  // Check input file exists
+  if (!fs.existsSync(INGESTION_OUTPUT)) {
+    console.error(`Error: Input file not found: ${INGESTION_OUTPUT}`);
+    console.error('Run --ingest first to fetch ticket data.');
+    process.exit(1);
+  }
+
+  if (options.debug) {
+    console.log('[DEBUG] Extract Subissues:');
+    console.log(`  Input: ${INGESTION_OUTPUT}`);
+    console.log(`  Output: ${SUBISSUES_OUTPUT}`);
+    console.log('');
+  }
+
+  // Load ingested tickets
+  const ingestionData = JSON.parse(fs.readFileSync(INGESTION_OUTPUT, 'utf8'));
+  const tickets = ingestionData.tickets || {};
+
+  // Load existing subissues for history tracking
+  const existingSubissues = loadExistingSubissues();
+
+  const subissues = [];
+  const now = new Date().toISOString();
+
+  console.log('Extracting subissues from ingested tickets...');
+
+  for (const [ticketKey, ticket] of Object.entries(tickets)) {
+    if (ticket.error || !ticket.comments) continue;
+
+    if (options.debug) {
+      console.log(`  [DEBUG] Processing ticket ${ticketKey}: ${ticket.comments.length} comments`);
+    }
+
+    for (let idx = 0; idx < ticket.comments.length; idx++) {
+      const comment = ticket.comments[idx];
+      const subissueNumber = detectSubissueNumber(comment.body);
+      
+      if (subissueNumber === null) {
+        if (options.debug) {
+          console.log(`    [DEBUG] Comment #${idx + 1} by ${comment.author}: NO SUBISSUE - body: "${comment.body.substring(0, 60)}${comment.body.length > 60 ? '...' : ''}"`);
+        }
+        continue;
+      }
+
+      const status = detectStatus(comment.body);
+      const lookupKey = `${ticketKey}:${subissueNumber}`;
+      const existing = existingSubissues.get(lookupKey);
+
+      // Build status history
+      let statusHistory = [];
+      if (existing && existing.status_history) {
+        statusHistory = [...existing.status_history];
+        // If status changed, add new entry
+        const lastHistoryStatus = statusHistory[statusHistory.length - 1]?.status;
+        if (lastHistoryStatus !== status) {
+          statusHistory.push({
+            status,
+            timestamp: now,
+            body_snapshot: comment.body
+          });
+        }
+      } else {
+        // First time seeing this subissue
+        statusHistory.push({
+          status,
+          timestamp: now,
+          body_snapshot: comment.body
+        });
+      }
+
+      subissues.push({
+        ticket_key: ticketKey,
+        subissue_number: subissueNumber,
+        opener: comment.author,
+        opener_email: comment.author_email,
+        status,
+        created: comment.created,
+        updated: comment.updated,
+        comment_id: comment.id,
+        body: comment.body,
+        status_history: statusHistory
+      });
+
+      if (options.debug) {
+        console.log(`    [DEBUG] Found subissue: ${ticketKey}#${subissueNumber} - ${status} (by ${comment.author})`);
+      }
+    }
+  }
+
+  // Sort by ticket_key, then subissue_number
+  subissues.sort((a, b) => {
+    const keyCompare = a.ticket_key.localeCompare(b.ticket_key);
+    if (keyCompare !== 0) return keyCompare;
+    return a.subissue_number - b.subissue_number;
+  });
+
+  const output = {
+    ...SUBISSUES_FORMAT_DOCUMENTATION,
+    metadata: {
+      last_extraction: now,
+      source_file: INGESTION_OUTPUT,
+      total_subissues: subissues.length
+    },
+    subissues
+  };
+
+  // Ensure output directory exists
+  if (!fs.existsSync(CACHE_DIR)) {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+  }
+
+  fs.writeFileSync(SUBISSUES_OUTPUT, JSON.stringify(output, null, 2));
+
+  console.log(`\nExtraction complete:`);
+  console.log(`  ${subissues.length} subissue(s) found`);
+  console.log(`  Output: ${SUBISSUES_OUTPUT}`);
+}
+
+async function createJiraComment(ticketKey, body, baseUrl, token, options = {}) {
+  const { debug = false, visibility = 'Developers' } = options;
+  const url = `${baseUrl}/rest/api/2/issue/${ticketKey}/comment`;
+  
+  const commentPayload = { body };
+  
+  // Add visibility restriction if specified
+  if (visibility) {
+    commentPayload.visibility = {
+      type: 'group',
+      value: visibility
+    };
+  }
+  
+  if (debug) {
+    console.log(`  [DEBUG] Comment payload:`);
+    console.log(`    ${JSON.stringify(commentPayload)}`);
+  }
+  
+  return makeRequest(url, token, {
+    method: 'POST',
+    body: JSON.stringify(commentPayload),
+    debug
+  });
+}
+
+async function runAddSubissue(args, options) {
+  // Parse arguments: [ticketKey] [description...]
+  let ticketKey = args[0];
+  let description = args.slice(1).join(' ');
+
+  // Smart default: infer ticket from git branch if first arg doesn't look like a ticket key
+  const ticketPattern = /^[A-Z][A-Z0-9]*-\d+$/i;
+  if (!ticketKey || !ticketPattern.test(ticketKey)) {
+    const inferred = getTicketFromGitBranch();
+    if (inferred) {
+      // First arg wasn't a ticket key, so it's part of the description
+      if (ticketKey) description = [ticketKey, ...args.slice(1)].join(' ');
+      ticketKey = inferred;
+      console.log(`Inferred ticket from branch: ${ticketKey}`);
+    } else {
+      // Interactive fallback
+      ticketKey = await promptUser('Ticket key: ');
+      if (!ticketKey) {
+        console.error('Error: Ticket key is required');
+        process.exit(1);
+      }
+    }
+  }
+
+  // Validate ticket key format
+  if (!ticketPattern.test(ticketKey)) {
+    console.error(`Error: Invalid ticket key format: ${ticketKey}`);
+    console.error('Expected format: PROJ-123');
+    process.exit(1);
+  }
+
+  ticketKey = ticketKey.toUpperCase();
+
+  if (!description) {
+    description = await promptUser('Subissue description: ');
+    if (!description) {
+      console.error('Error: Description is required');
+      process.exit(1);
+    }
+  }
+
+  const baseUrl = (process.env.JIRA_BASE_URL || 'https://support.zabbix.com').replace(/\/$/, '');
+  const token = process.env.JIRA_PAT;
+
+  if (!token) {
+    console.error('Error: JIRA_PAT environment variable required');
+    process.exit(1);
+  }
+
+  // Step 1: Refresh ticket state by running ingest and extract for this ticket
+  if (options.debug) {
+    console.log('[DEBUG] Refreshing ticket state from JIRA...');
+  }
+
+  console.log(`Fetching latest state of ${ticketKey}...`);
+  try {
+    // Fetch the ticket with latest comments
+    const ticketData = await fetchTicketWithComments(ticketKey, baseUrl, token, options.debug);
+    
+    if (ticketData.error) {
+      console.error(`Error: Failed to fetch ticket: ${ticketData.error}`);
+      process.exit(1);
+    }
+
+    // Update the ingestion cache with just this ticket
+    if (!fs.existsSync(CACHE_DIR)) {
+      fs.mkdirSync(CACHE_DIR, { recursive: true });
+    }
+
+    const existingData = loadExistingData(INGESTION_OUTPUT) || { tickets: {} };
+    existingData.tickets[ticketKey] = ticketData;
+    existingData.metadata = {
+      last_sync: new Date().toISOString(),
+      tickets_file: TICKETS_FILE,
+      jira_base_url: baseUrl,
+      total_tickets: Object.keys(existingData.tickets).length,
+      total_comments: Object.values(existingData.tickets).reduce((sum, t) => sum + (t.comments?.length || 0), 0)
+    };
+    existingData._format_version = FORMAT_DOCUMENTATION._format_version;
+    existingData._format_description = FORMAT_DOCUMENTATION._format_description;
+    existingData._format_schema = FORMAT_DOCUMENTATION._format_schema;
+
+    fs.writeFileSync(INGESTION_OUTPUT, JSON.stringify(existingData, null, 2));
+    
+    if (options.debug) {
+      console.log(`[DEBUG] Updated ingestion cache with ${ticketData.comments?.length || 0} comments`);
+    }
+
+    // Step 2: Extract subissues to get accurate count
+    if (options.debug) {
+      console.log('[DEBUG] Extracting subissues to determine next number...');
+    }
+
+    const ingestionData = JSON.parse(fs.readFileSync(INGESTION_OUTPUT, 'utf8'));
+    const tickets = ingestionData.tickets || {};
+    const existingSubissues = loadExistingSubissues();
+    const subissues = [];
+    const now = new Date().toISOString();
+
+    const ticket = tickets[ticketKey];
+    if (ticket && !ticket.error && ticket.comments) {
+      for (const comment of ticket.comments) {
+        const subissueNumber = detectSubissueNumber(comment.body);
+        if (subissueNumber === null) continue;
+
+        const status = detectStatus(comment.body);
+        const lookupKey = `${ticketKey}:${subissueNumber}`;
+        const existing = existingSubissues.get(lookupKey);
+
+        let statusHistory = [];
+        if (existing && existing.status_history) {
+          statusHistory = [...existing.status_history];
+          const lastHistoryStatus = statusHistory[statusHistory.length - 1]?.status;
+          if (lastHistoryStatus !== status) {
+            statusHistory.push({
+              status,
+              timestamp: now,
+              body_snapshot: comment.body
+            });
+          }
+        } else {
+          statusHistory.push({
+            status,
+            timestamp: now,
+            body_snapshot: comment.body
+          });
+        }
+
+        subissues.push({
+          ticket_key: ticketKey,
+          subissue_number: subissueNumber,
+          opener: comment.author,
+          opener_email: comment.author_email,
+          status,
+          created: comment.created,
+          updated: comment.updated,
+          comment_id: comment.id,
+          body: comment.body,
+          status_history: statusHistory
+        });
+      }
+    }
+
+    const ticketSubissues = subissues.filter(s => s.ticket_key === ticketKey);
+    const number = ticketSubissues.length > 0 ? Math.max(...ticketSubissues.map(s => s.subissue_number)) + 1 : 1;
+
+    if (options.debug) {
+      console.log(`[DEBUG] Found ${ticketSubissues.length} existing subissues`);
+      console.log(`[DEBUG] Next subissue number: ${number}`);
+    }
+
+    const formattedBody = `(${number}) ${description}`;
+
+    if (options.debug) {
+      console.log('[DEBUG] Add Subissue:');
+      console.log(`  Ticket: ${ticketKey}`);
+      console.log(`  Number: ${number}`);
+      console.log(`  Body: ${formattedBody}`);
+      console.log(`  Visibility: Developers`);
+      console.log(`  JIRA URL: ${baseUrl}`);
+    }
+
+    console.log(`\nPosting subissue #${number} to ${ticketKey}...`);
+
+    // Step 3: Post to Jira with Developers-only visibility
+    try {
+      await createJiraComment(ticketKey, formattedBody, baseUrl, token, { debug: options.debug, visibility: 'Developers' });
+      console.log(`✓ Posted subissue #${number} to ${ticketKey}`);
+    } catch (err) {
+      console.error(`Error: Failed to post comment to Jira: ${err.message}`);
+      process.exit(1);
+    }
+
+    // Step 4: Create local file for daemon (only if Jira succeeded)
+    const filePath = createSubissueFile(ticketKey, number, formattedBody);
+    console.log(`✓ Created file: ${filePath}`);
+    console.log(`\nSubissue #${number} created successfully!`);
+
+  } catch (err) {
+    console.error(`Error: Failed to add subissue: ${err.message}`);
+    if (options.debug) {
+      console.error(`[DEBUG] Stack trace: ${err.stack}`);
+    }
+    process.exit(1);
+  }
+}
+
+// Main
+const options = parseArgs(process.argv.slice(2));
+
+if (options.help) {
+  showHelp();
+  process.exit(0);
+}
+
+if (options.daemon) {
+  console.log('Daemon mode not yet implemented.');
+  console.log('See README.md for planned functionality.');
+  process.exit(0);
+}
+
+if (options.resetDaemon) {
+  console.log('Reset daemon not yet implemented.');
+  console.log('See README.md for planned functionality.');
+  process.exit(0);
+}
+
+if (options.checkAuth) {
+  runCheckAuth(options).catch(err => {
+    console.error('Fatal error:', err.message);
+    process.exit(1);
+  });
+} else if (options.listTickets) {
+  runListTickets(options).catch(err => {
+    console.error('Fatal error:', err.message);
+    process.exit(1);
+  });
+} else if (options.ingest) {
+  runIngest(options).catch(err => {
+    console.error('Fatal error:', err.message);
+    process.exit(1);
+  });
+} else if (options.extractSubissues) {
+  runExtractSubissues(options).catch(err => {
+    console.error('Fatal error:', err.message);
+    process.exit(1);
+  });
+} else if (options.addSubissue) {
+  runAddSubissue(options.addSubissueArgs, options).catch(err => {
+    console.error('Fatal error:', err.message);
+    process.exit(1);
+  });
+} else {
+  console.error('No command specified. Use --check-auth, --list-tickets, --ingest, --extract-subissues, --add-subissue, --daemon, or --help.');
+  process.exit(1);
+}

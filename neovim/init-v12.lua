@@ -101,6 +101,7 @@ vim.pack.add(vim.user.set_cb_packs {
         "css-lsp",
         "typescript-language-server", -- also EcmaScript ls (JS)
         "rust_analyzer",
+        "ruby_lsp", -- Ruby language server
     }
     require('mason').setup()
     require('mason-lspconfig').setup()
@@ -132,11 +133,18 @@ vim.pack.add(vim.user.set_cb_packs {
   "https://github.com/gutsavgupta/nvim-gemini-companion",
   function()
     -- Local Ollama ghost-text completions (uses ayay/agent.sh)
-    local ghost = dofile(vim.fn.getenv("SCRIPTS_DIR") .. "/neovim/ollama-ghost.lua")
-    ghost.setup({
-      model = "deepseek-coder:6.7b",
-      trigger_on_insert = false,
-    })
+    -- Local Ollama ghost-text completions (Modular)
+    local ghost = dofile(vim.fn.getenv("SCRIPTS_DIR") .. "/neovim/ghost-text.lua")
+    local ollama_config = dofile(vim.fn.getenv("SCRIPTS_DIR") .. "/neovim/ghost-ollama.lua").get_config()
+    ghost.setup(vim.tbl_deep_extend("force", ollama_config, {
+      debug = true,
+      debounce_ms = 4000,
+    }))
+    -- Keymaps for Ghost Text
+    vim.keymap.set("i", "<C-y>", ghost.accept, { desc = "Ghost: Accept" })
+    vim.keymap.set("i", "<C-]>", ghost.cancel, { desc = "Ghost: Cancel" })
+    vim.keymap.set("i", "<C-e>", ghost.edit_popup, { desc = "Ghost: Edit in popup" })
+    vim.keymap.set("n", "<leader>og", ghost.complete, { desc = "Ghost: Trigger" })
 
     -- TODO Agent: scans buffer for TODOs, invokes agent.sh for suggestions
     local todo_agent = dofile(vim.fn.getenv("SCRIPTS_DIR") .. "/neovim/todo-agent.lua")
@@ -168,7 +176,7 @@ vim.pack.add(vim.user.set_cb_packs {
 
     require("nvim-treesitter.configs").setup({
         ensure_installed = {"go", "lua", "python", "rust", "typescript", "yaml", "json", "nix",
-            "bash", "php", "html", "css", "javascript", "c", "cpp", "markdown",
+            "bash", "php", "html", "css", "javascript", "c", "cpp", "markdown", "ruby",
         },
         highlight = {
             enable = true,
@@ -269,7 +277,7 @@ vim.wo.wrap = false
 local highlight_timer = nil
 
 vim.api.nvim_create_autocmd({"CursorHold"}, {
-  pattern = {'*.js', '*.php', '*.go', '*.lua'},
+  pattern = {'*.js', '*.php', '*.go', '*.lua', '*.rb'},
   callback = function()
     local clients = vim.lsp.get_clients({ bufnr = vim.api.nvim_get_current_buf() })
     for _, client in ipairs(clients) do
@@ -287,7 +295,7 @@ vim.api.nvim_create_autocmd({"CursorHold"}, {
 })
 
 vim.api.nvim_create_autocmd({"CursorMoved"}, {
-  pattern = {'*.js', '*.php', '*.go', '*.lua'},
+  pattern = {'*.js', '*.php', '*.go', '*.lua', '*.rb'},
   callback = function()
     if highlight_timer then
       highlight_timer:stop()
@@ -578,6 +586,8 @@ map("n", "<a-->", ":cprev<cr>", { silent = true, desc = "Quickfix: Previous" })
 -- MAC
   -- nnoremap ≠ <your-command>  " Alt+=
   -- nnoremap – <your-command>  " Alt+-
+require"macaltkey".keymap.set("i", "<a-=>", "<esc>:tabnext<cr>", { silent = true, desc = "Tabs: Next" })
+require"macaltkey".keymap.set("i", "<a-->", "<esc>:tabprev<cr>", { silent = true, desc = "Tabs: Next" })
 
 -- Tabs
 map("n", "<a->>", ":tabmove +1<cr>", { silent = true, desc = "Tabs: Move Right" })
@@ -599,3 +609,7 @@ map("i", "<c-l>", "<c-g>u<esc>[s1z=`a<c-g>u", { desc = "Insert: Correct spelling
 -- Terminal Mode
 map("t", "<M-`>", "<C-\\><C-n>", { desc = "Terminal: Escape to Normal" })
 -- }}}
+
+-- Load Zabbix Style Checker
+local zbx_style = dofile(vim.fn.getenv("SCRIPTS_DIR") .. "/neovim/zabbix-style.lua")
+zbx_style.setup()

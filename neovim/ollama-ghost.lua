@@ -6,7 +6,7 @@ local M = {}
 M.config = {
   agent_script = vim.fn.getenv("SCRIPTS_DIR") .. "/ayay/agent.sh",
   model = "deepseek-coder:6.7b",
-  debounce_ms = 500,
+  debounce_ms = 3000,
   max_context_lines = 50,
   ghost_hl = "Comment",
   trigger_on_insert = true,
@@ -224,6 +224,8 @@ function M.complete()
   local prompt = build_prompt(ctx)
   local row, col = ctx.row, ctx.col
 
+  vim.notify("Ollama: Requesting completion...", vim.log.levels.INFO)
+
   call_agent(prompt, function(completion)
     local mode = vim.api.nvim_get_mode().mode
     dbg("callback: mode=%s", mode)
@@ -257,7 +259,7 @@ function M.setup(opts)
 
   vim.api.nvim_set_hl(0, "OllamaGhost", { link = M.config.ghost_hl })
 
-  vim.keymap.set("i", "<C-g>", function()
+  vim.keymap.set("i", "<C-y>", function()
     if current_suggestion then
       M.accept()
     else

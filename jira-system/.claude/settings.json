@@ -1,0 +1,23 @@
+{
+    "permissions": {
+      "allow": [
+        "Bash(echo *)",
+        "Bash(ls *)",
+        "Bash(node *)",
+        "Bash(git *)"
+      ]
+    },
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "fish -c \"$CLAUDE_TOOL_INPUT_COMMAND\""
+            }
+          ]
+        }
+      ]
+    }
+  }

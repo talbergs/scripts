@@ -224,6 +224,10 @@ bind \r fish_transient_execute
 bind \n fish_transient_execute
 # }}}
 
+function 8b
+    ~/scripts/ayay/agent.sh prompt $argv
+end
+
 # {{{ USE NATIVE ICONS - UTF-16 tops
 # ⋕  - root prompt
 # ⊱⋅ - user prompt
@@ -257,5 +261,5 @@ abbr -a -g gr git remote
 abbr -a -g gco git checkout
 abbr -a -g glog git log --format=fuller --first-parent --abbrev-commit
 abbr -a -g rmf rm -rf
-abbr -a -g cp claude --permission-mode acceptEdits -p
+abbr -a -g c claude --permission-mode acceptEdits -p
 # }}}

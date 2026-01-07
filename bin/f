@@ -3,10 +3,12 @@
 shellenv=/tmp/shellenv.fish
 bindir=$(dirname $0)
 export SCRIPTS_DIR="$(cd "$bindir";cd ..;pwd)"
+export PATH="$HOME/.bun/bin:$PATH"
+export PATH="$HOME/.opencode/bin:$PATH"
+export PATH="$PATH:/nix/var/nix/profiles/default/bin"
 
 cat > "$shellenv" <<EOF
 # fish_add_path --path /Applications/Docker.app/Contents/Resources/bin/ > /dev/null
-export PATH="$PATH:/nix/var/nix/profiles/default/bin"
 
 # [n]eovim
 function n
@@ -48,17 +50,14 @@ function :comment
 end
 
 function scripts:conf
-    [ -d $HOME/.config/sketchybar ] && rm -rf $HOME/.config/sketchybar
-    # cp -R $SCRIPTS_DIR/rice/sketchybar-minimal $HOME/.config/sketchybar
-    # brew services restart sketchybar
-
     cp $SCRIPTS_DIR/rice/aerospace/.aerospace.toml $HOME
     aerospace reload-config
 end
 
-function scripts:init
-    # aerospace &
-end
+# needed os config for Zabbix server to run on OSX
+# sudo sysctl -w kern.sysv.shmmax=268435456
+# sudo sysctl -w kern.sysv.shmall=65536
+# sudo sysctl -w kern.sysv.shmseg=32
 EOF
 
 fish -C "source $bindir/../fish/config-v42.fish && source '$shellenv'" $@
