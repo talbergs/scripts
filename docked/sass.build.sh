@@ -13,7 +13,7 @@ echo "Building Docker image: ${IMAGE_NAME}:${IMAGE_TAG}"
 echo "Building from: $SCRIPT_DIR"
 echo ""
 
-docker build \
+DOCKER_BUILDKIT=1 docker build \
     --tag "${IMAGE_NAME}:${IMAGE_TAG}" \
     --file "${SCRIPT_DIR}/sass.Dockerfile" \
     "${SCRIPT_DIR}"

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(chmod:*)",
+      "Bash(./docker-build.sh:*)",
+      "Bash(tree-sitter query:*)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ]
+  },
+  "outputStyle": "default"
+}
