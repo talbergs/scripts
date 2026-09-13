@@ -246,6 +246,10 @@ function h
     history merge
     echo history merged
 end
+
+function nvim
+	$HOME/Repositoies/zabbix-mtalbergs/nvim-osx/run.sh $argv
+end
 # }}}
 
 # {{{ ABBREVIATIONS
@@ -261,5 +265,6 @@ abbr -a -g gr git remote
 abbr -a -g gco git checkout
 abbr -a -g glog git log --format=fuller --first-parent --abbrev-commit
 abbr -a -g rmf rm -rf
-abbr -a -g c claude --permission-mode acceptEdits -p
+abbr -a -g v nvim
+abbr -a -g n nvim
 # }}}

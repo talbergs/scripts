@@ -24,6 +24,7 @@ vim.lsp.config('lua_ls', {
 })
 
 vim.lsp.config('intelephense', {
+	root_markers = {"composer.json"},
 	init_options = {
 		licenceKey = '008RLZPEP6YHQ1P',
 	},
@@ -491,7 +492,7 @@ end
 local sticky_index = 1
 
 local function add_sticky_highlight()
-  local params = vim.lsp.util.make_position_params()
+  local params = vim.lsp.util.make_position_params(0, "utf-16")
   vim.lsp.buf_request(0, "textDocument/documentHighlight", params, function(err, result)
     if err or not result then return end
     local hl_group = sticky_groups[sticky_index]
@@ -517,6 +518,7 @@ vim.keymap.set("n", "gH", function()
 end, { desc = "LSP: Clear Sticky Highlights" })
 
 -- {{{ Keymaps
+vim.cmd[[tnoremap <c-w> <c-\><c-n><c-w>]]
 map("n", "gr", "<cmd>lua vim.lsp.buf.references()<cr>", { desc = "LSP: References" })
 map("n", "gi", "<cmd>lua vim.lsp.buf.implementation()<cr>", { desc = "LSP: Implementation" })
 map("n", "gt", "<cmd>lua vim.lsp.buf.type_definition()<cr>", { desc = "LSP: Type Definition" })
@@ -534,10 +536,36 @@ map("n", "<leader>w", ":write<cr>", { silent = true, desc = "File: Write" })
 map("n", "<leader>n", ":Oil<cr>", { silent = true, desc = "File: Oil File Explorer" })
 
 -- Telescope
+require('telescope').setup{
+  defaults = {
+    vimgrep_arguments = {
+      'rg',
+      "--color=never",
+      "--column",
+      "--line-number",
+      "--no-heading",
+      "--no-ignore",    -- Don't respect .gitignore for grep
+      "--hidden",       -- Search hidden files
+      "--smart-case",
+      "--with-filename",
+    },
+  },
+  pickers = {
+    -- Apply no_ignore to find_files specifically (uses --files, not vimgrep_arguments)
+    find_files = {
+      no_ignore = true,
+      hidden = true,
+    },
+    live_grep = {
+      additional_args = function()
+        return { "--no-ignore", "--hidden" }
+      end,
+    },
+  },
+}
+
 map("n", "<leader>b", ":Telescope buffers<cr>", { silent = true, desc = "Telescope: Buffers" })
-map("n", "<leader>F", function()
-  require("telescope.builtin").grep_string()
-end, { desc = "Telescope: Grep String" })
+map("n", "<leader>F", function() require("telescope.builtin").grep_string() end, { desc = "Telescope: Grep String" })
 map("n", "<leader>g", ":Telescope live_grep<cr>", { silent = true, desc = "Telescope: Live Grep" })
 map("n", "<leader>f", ":Telescope find_files<cr>", { silent = true, desc = "Telescope: Find Files" })
 map(
