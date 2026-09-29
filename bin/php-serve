@@ -21,6 +21,14 @@ then
     dbname="$dbnameuser"
 fi
 
+read -p "PHP version (8.2/8.3/8.4/8.5, default: 8.2): " PHP_VER
+
+if [ -z "$PHP_VER" ]; then
+    PHP_VER=8.2
+fi
+
+PHP_BIN="/opt/homebrew/opt/php@${PHP_VER}/bin/php"
+
 read -p "Enable xDebug N/y: " ENABLE_XDEBUG
 read -p "Rebuild DB schema? Y/n: " REBUILD_SCHEMA
 read -p "Reapply DB data? Y/n: " REAPPLY_SCHEMA
@@ -38,14 +46,29 @@ reset_config() {
         \$DB['DATABASE'] = DEV_DBNAME;
         \$DB['USER'] = DEV_DBNAME;
         \$DB['PASSWORD'] = DEV_DBNAME;
+		/*
+		\$HISTORY_PROVIDERS[] = [
+		  'types' => ['uint','dbl','str','log','text','json'],
+		  'provider' => 'clickhouse',
+		  'url' => 'http://localhost:8123',
+		  'db' => 'zabbix',
+		  'username' => 'zabbix',
+		  'password' => 'zabbix'
+		];
+		*/
     " > ./conf/zabbix.conf.php
 }
 
+ZLIB_DIR="/opt/homebrew/opt/zlib"
 rebuild_schema() {
     (
         cd ..
+        export PKG_CONFIG_PATH="${ZLIB_DIR}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+        export CPPFLAGS="-I${ZLIB_DIR}/include ${CPPFLAGS:-}"
+        export LDFLAGS="-L${ZLIB_DIR}/lib ${LDFLAGS:-}"
         ./bootstrap.sh
-        ./configure --prefix $PWD/result --with-postgresql --enable-agent2 --enable-server
+        ./configure --prefix "$PWD/result" --with-postgresql --enable-agent2 --enable-server \
+            --with-zlib="${ZLIB_DIR}"
         make dbschema
     )
 }
@@ -94,7 +117,15 @@ then
     XDEBUG_INI_CONF='-d xdebug.mode=debug -d xdebug.start_with_request=yes -d xdebug.idekey=VSCODE -d xdebug.client_host=localhost -d xdebug.client_port=9003 -d xdebug.discover_client_host=1'
 fi
 
-php \
+if [ ! -f "$PHP_BIN" ]; then
+    echo "PHP binary not found: $PHP_BIN"
+    echo "Install with: brew install php@${PHP_BIN##*php@}"
+    exit 1
+fi
+
+echo "Using PHP: $PHP_BIN"
+
+$PHP_BIN \
 	-S 0.0.0.0:${PORT} \
     ${XDEBUG_INI_CONF} \
     -d max_input_time=300 \

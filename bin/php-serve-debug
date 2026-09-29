@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# php-serve-debug — same as php-serve but with Xdebug always enabled
+# Usage: php-serve-debug [port]
+
+set -e
+
+if [ ! -f ./index.php ]; then
+    echo "No index.php file in $PWD"
+    exit 1
+fi
+
+dbname=$(cd ..; basename "$PWD" | sed 's/[^[:alnum:]]//g' | tr '[:upper:]' '[:lower:]')
+PORT="${1:-8888}"
+PHP_VER="${2:-8.5}"
+
+# Read DB name (just press enter for default)
+read -p "Better DB name? ($dbname): " dbnameuser
+if [ -n "$dbnameuser" ]; then dbname="$dbnameuser"; fi
+
+PHP_BIN="/opt/homebrew/opt/php@${PHP_VER}/bin/php"
+
+read -p "Rebuild DB schema? Y/n: " REBUILD_SCHEMA
+read -p "Reapply DB data? Y/n: " REAPPLY_SCHEMA
+
+if [ -f ./conf/zabbix.conf.php ]; then
+    read -p "Reset config file? Y/n: " RESET_CONFIG
+else
+    RESET_CONFIG=Y
+fi
+
+reset_config() {
+    cat > ./conf/zabbix.conf.php << EOF
+<?php
+define('DEV_DBNAME', '$dbname');
+\$DB['TYPE'] = ZBX_DB_POSTGRESQL;
+\$DB['DATABASE'] = DEV_DBNAME;
+\$DB['USER'] = DEV_DBNAME;
+\$DB['PASSWORD'] = DEV_DBNAME;
+EOF
+}
+
+rebuild_schema() {
+    (
+        cd ..
+        ./bootstrap.sh
+        ./configure --prefix "$PWD/result" --with-postgresql --enable-agent2 --enable-server
+        make dbschema
+    )
+}
+
+reapply_schema() {
+    set +e
+    (
+        cd ..
+        psql -h 0.0.0.0 postgres -c "ALTER DATABASE $dbname WITH ALLOW_CONNECTIONS false;"
+        psql -h 0.0.0.0 postgres -c "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = '$dbname' AND pid <> pg_backend_pid();"
+        psql -h 0.0.0.0 postgres -c "DROP DATABASE $dbname"
+        psql -h 0.0.0.0 postgres -c "CREATE DATABASE $dbname WITH ENCODING 'Unicode' TEMPLATE template0;"
+        psql -h 0.0.0.0 "$dbname" -c "\i $PWD/database/postgresql/schema.sql"
+        psql -h 0.0.0.0 "$dbname" -c "\i $PWD/database/postgresql/images.sql"
+        psql -h 0.0.0.0 "$dbname" -c "\i $PWD/database/postgresql/data.sql"
+        psql -h 0.0.0.0 postgres -c "CREATE USER $dbname WITH SUPERUSER PASSWORD '$dbname';"
+        psql -h 0.0.0.0 postgres -c "GRANT ALL PRIVILEGES ON DATABASE \"$dbname\" TO $dbname;"
+    )
+    set -e
+}
+
+[[ "$REBUILD_SCHEMA" = "Y" ]] && rebuild_schema
+[[ "$REAPPLY_SCHEMA" = "Y" ]] && reapply_schema
+[[ "$RESET_CONFIG" = "Y" ]] && reset_config
+
+PIDFILE="/tmp/php-serve-${PORT}.pid"
+if [ -f "$PIDFILE" ]; then
+    OLD_PID=$(cat "$PIDFILE")
+    if ps -p "$OLD_PID" > /dev/null 2>&1; then
+        echo "PHP server is already running on port $PORT (PID: $OLD_PID)"
+        exit 1
+    else
+        rm -f "$PIDFILE"
+    fi
+fi
+
+if [ ! -f "$PHP_BIN" ]; then
+    echo "PHP binary not found: $PHP_BIN"
+    exit 1
+fi
+
+echo "=== PHP Dev Server + Xdebug ==="
+echo "  PHP:    $PHP_BIN"
+echo "  Port:   $PORT"
+echo "  DB:     $dbname"
+echo "  Xdebug: mode=debug, port=9003, idekey=VSCODE"
+echo "  PID:    $PIDFILE"
+echo ""
+
+$PHP_BIN \
+    -S 0.0.0.0:${PORT} \
+    -d xdebug.mode=debug \
+    -d xdebug.start_with_request=yes \
+    -d xdebug.idekey=VSCODE \
+    -d xdebug.client_host=localhost \
+    -d xdebug.client_port=9003 \
+    -d xdebug.discover_client_host=1 \
+    -d max_input_time=300 \
+    -d post_max_size=16M \
+    -d max_execution_time=300 \
+    -d display_startup_errors=1 \
+    -d ignore_repeated_errors=1 \
+    -d error_log=/tmp/php.error.log \
+    -d date.timezone=Europe/Riga \
+    -d error_reporting=E_ALL \
+    -d log_errors=On \
+    -d memory_limit=4G &
+
+PHP_PID=$!
+echo $PHP_PID > "$PIDFILE"
+echo "Server started (PID: $PHP_PID)"
+wait $PHP_PID
+rm -f "$PIDFILE"
